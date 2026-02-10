@@ -1,3 +1,7 @@
+/**
+ * Continental US state paths (simplified Albers projection, viewBox 0 0 960 600).
+ * Used as background fill for the map. Each state is a separate path for subtle styling.
+ */
 const US_STATES_PATHS = {
     AL: { d: "M628,430 L629,465 630,488 618,489 618,495 607,496 607,430 Z" },
     AZ: { d: "M205,420 L205,485 175,505 140,485 130,440 140,410 175,395 Z" },
