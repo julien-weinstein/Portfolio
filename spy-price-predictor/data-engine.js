@@ -1,20 +1,10 @@
 /**
- * Data Engine — Fetches and manages all market data from free public APIs.
- *
- * Sources:
- *   - Yahoo Finance (via query2 API) — SPY, VIX, sector ETFs, oil, bonds
- *   - Alpha Vantage (free tier) — intraday data, economic indicators
- *   - NewsAPI / GNews — headline sentiment
- *   - FRED (Federal Reserve) — macro indicators
- *
- * All data is cached to reduce API calls and works with fallback/simulated data
- * when APIs are unavailable (e.g. CORS in browser, rate limits).
+ * Data Engine — Fetches market data with multiple fallback strategies.
  */
 
 const DataEngine = (() => {
-    // ── Cache ──────────────────────────────────────────────────────────
     const cache = {};
-    const CACHE_TTL = 60_000; // 1 minute
+    const CACHE_TTL = 60_000;
 
     function cached(key, ttl = CACHE_TTL) {
         const entry = cache[key];
@@ -22,29 +12,35 @@ const DataEngine = (() => {
         return null;
     }
 
-    function setCache(key, data, ttl = CACHE_TTL) {
+    function setCache(key, data) {
         cache[key] = { data, ts: Date.now() };
         return data;
     }
 
-    // ── Yahoo Finance quote API (multiple CORS proxies for reliability) ─
+    // Multiple CORS proxies for reliability
     const CORS_PROXIES = [
         'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
         'https://api.codetabs.com/v1/proxy?quest=',
+        'https://cors-anywhere.herokuapp.com/',
+        'https://thingproxy.freeboard.io/fetch/',
     ];
 
     async function tryFetchWithProxies(targetUrl) {
+        // Try direct first (works in some environments)
+        try {
+            const resp = await fetch(targetUrl, { signal: AbortSignal.timeout(5000) });
+            if (resp.ok) return await resp.json();
+        } catch {}
+
+        // Then try each proxy
         for (const proxy of CORS_PROXIES) {
             try {
                 const url = proxy + encodeURIComponent(targetUrl);
                 const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-                if (resp.ok) {
-                    const json = await resp.json();
-                    return json;
-                }
+                if (resp.ok) return await resp.json();
             } catch {
-                continue; // try next proxy
+                continue;
             }
         }
         return null;
@@ -56,8 +52,9 @@ const DataEngine = (() => {
         if (hit) return hit;
 
         try {
-            const targetUrl = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`;
-            const json = await tryFetchWithProxies(targetUrl);
+            const json = await tryFetchWithProxies(
+                `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`
+            );
             if (!json) return null;
             const results = {};
             (json.quoteResponse?.result || []).forEach(q => {
@@ -70,7 +67,6 @@ const DataEngine = (() => {
                     open: q.regularMarketOpen,
                     prevClose: q.regularMarketPreviousClose,
                     volume: q.regularMarketVolume,
-                    marketCap: q.marketCap,
                     fiftyDayAvg: q.fiftyDayAverage,
                     twoHundredDayAvg: q.twoHundredDayAverage,
                     avgVolume: q.averageDailyVolume3Month,
@@ -88,8 +84,9 @@ const DataEngine = (() => {
         if (hit) return hit;
 
         try {
-            const targetUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`;
-            const json = await tryFetchWithProxies(targetUrl);
+            const json = await tryFetchWithProxies(
+                `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`
+            );
             if (!json) return null;
             const result = json.chart?.result?.[0];
             if (!result) return null;
@@ -109,10 +106,9 @@ const DataEngine = (() => {
         }
     }
 
-    // ── Generate realistic simulated data when APIs fail ───────────────
+    // ── Simulated fallback data ──────────────────────────────────────
     function generateSimulatedQuotes() {
-        const now = Date.now();
-        const baseSpyPrice = 656 + Math.random() * 10 - 5; // ~651-661 range (Mar 2026)
+        const baseSpyPrice = 659 + Math.random() * 4 - 2; // ~657-661 range (Mar 2026)
         const vixBase = 14 + Math.random() * 8;
 
         function makeQuote(base, volatility) {
@@ -133,27 +129,27 @@ const DataEngine = (() => {
         }
 
         return {
-            SPY: makeQuote(baseSpyPrice, 5),
+            SPY: makeQuote(baseSpyPrice, 4),
             '^VIX': { price: +vixBase.toFixed(2), change: +(Math.random() * 2 - 1).toFixed(2), changePct: +((Math.random() * 2 - 1) / vixBase * 100).toFixed(2) },
-            QQQ: makeQuote(560 + Math.random() * 10, 6),
-            IWM: makeQuote(240 + Math.random() * 8, 3),
-            XLF: makeQuote(52 + Math.random() * 2, 1.2),
-            XLE: makeQuote(92 + Math.random() * 4, 2),
-            XLK: makeQuote(250 + Math.random() * 8, 5),
-            XLV: makeQuote(160 + Math.random() * 4, 2),
-            XLI: makeQuote(138 + Math.random() * 4, 2),
-            XLU: makeQuote(80 + Math.random() * 3, 1.5),
-            USO: makeQuote(72 + Math.random() * 4, 2),
-            TLT: makeQuote(88 + Math.random() * 3, 1.5),
-            GLD: makeQuote(290 + Math.random() * 8, 3),
+            QQQ: makeQuote(565 + Math.random() * 8, 5),
+            IWM: makeQuote(242 + Math.random() * 6, 3),
+            XLF: makeQuote(53 + Math.random() * 2, 1),
+            XLE: makeQuote(93 + Math.random() * 3, 2),
+            XLK: makeQuote(252 + Math.random() * 6, 4),
+            XLV: makeQuote(161 + Math.random() * 3, 2),
+            XLI: makeQuote(139 + Math.random() * 3, 2),
+            XLU: makeQuote(81 + Math.random() * 2, 1),
+            USO: makeQuote(73 + Math.random() * 3, 2),
+            TLT: makeQuote(89 + Math.random() * 2, 1),
+            GLD: makeQuote(292 + Math.random() * 6, 3),
             DXY: makeQuote(103 + Math.random() * 2, 0.8),
-            AAPL: makeQuote(245 + Math.random() * 8, 5),
-            MSFT: makeQuote(455 + Math.random() * 12, 7),
-            NVDA: makeQuote(145 + Math.random() * 10, 8),
-            AMZN: makeQuote(235 + Math.random() * 8, 5),
-            GOOGL: makeQuote(195 + Math.random() * 6, 4),
-            META: makeQuote(680 + Math.random() * 15, 10),
-            TSLA: makeQuote(280 + Math.random() * 15, 10),
+            AAPL: makeQuote(247 + Math.random() * 6, 4),
+            MSFT: makeQuote(458 + Math.random() * 10, 6),
+            NVDA: makeQuote(147 + Math.random() * 8, 7),
+            AMZN: makeQuote(237 + Math.random() * 6, 4),
+            GOOGL: makeQuote(197 + Math.random() * 5, 3),
+            META: makeQuote(685 + Math.random() * 12, 8),
+            TSLA: makeQuote(283 + Math.random() * 12, 8),
         };
     }
 
@@ -161,24 +157,18 @@ const DataEngine = (() => {
         const data = [];
         const now = Date.now();
         const msPerBar = intervalMinutes * 60_000;
-        const barsPerDay = Math.floor((6.5 * 60) / intervalMinutes); // market hours
+        const barsPerDay = Math.floor((6.5 * 60) / intervalMinutes);
         const totalBars = barsPerDay * days;
-        let price = basePrice - (Math.random() * 5);
+        let price = basePrice - (Math.random() * 4);
 
         for (let i = totalBars; i >= 0; i--) {
-            const dayIdx = Math.floor(i / barsPerDay);
-            const barIdx = i % barsPerDay;
-
-            // Skip weekends roughly
             const time = now - i * msPerBar;
             const d = new Date(time);
             if (d.getDay() === 0 || d.getDay() === 6) continue;
 
-            // Random walk with mean reversion toward basePrice
             const drift = (basePrice - price) * 0.002;
             const vol = basePrice * 0.001 * (1 + Math.random());
-            const move = drift + (Math.random() - 0.48) * vol;
-            price += move;
+            price += drift + (Math.random() - 0.48) * vol;
 
             const barVol = vol * (0.5 + Math.random());
             data.push({
@@ -193,36 +183,26 @@ const DataEngine = (() => {
         return data;
     }
 
-    // ── Simulated news headlines with sentiment ────────────────────────
     function generateSimulatedNews() {
         const headlines = [
-            { title: 'Fed officials signal patience on rate cuts amid sticky inflation', sentiment: -0.3, category: 'macro' },
-            { title: 'Tech earnings season kicks off with strong cloud revenue growth', sentiment: 0.6, category: 'earnings' },
-            { title: 'Oil prices rise on Middle East supply concerns', sentiment: -0.2, category: 'geopolitical' },
-            { title: 'Jobs report beats expectations, unemployment holds at 3.8%', sentiment: 0.4, category: 'macro' },
-            { title: 'NVIDIA announces next-gen AI chips, shares surge pre-market', sentiment: 0.7, category: 'tech' },
-            { title: 'Treasury yields climb to weekly high on strong economic data', sentiment: -0.2, category: 'bonds' },
-            { title: 'China manufacturing PMI contracts for third straight month', sentiment: -0.4, category: 'geopolitical' },
-            { title: 'Consumer confidence index rises above consensus', sentiment: 0.3, category: 'macro' },
-            { title: 'Retail sales data shows resilient consumer spending', sentiment: 0.35, category: 'macro' },
-            { title: 'European Central Bank holds rates, signals summer cut', sentiment: 0.15, category: 'macro' },
-            { title: 'Semiconductor stocks rally on AI demand outlook', sentiment: 0.55, category: 'tech' },
-            { title: 'Crude inventories draw down more than expected', sentiment: -0.1, category: 'commodities' },
-            { title: 'S&P 500 companies beating earnings estimates at 78% rate', sentiment: 0.5, category: 'earnings' },
-            { title: 'Dollar index strengthens on divergent central bank policies', sentiment: -0.15, category: 'forex' },
-            { title: 'Options market shows elevated put/call ratio ahead of FOMC', sentiment: -0.35, category: 'sentiment' },
+            { title: 'Fed officials signal patience on rate cuts', sentiment: -0.3, category: 'macro' },
+            { title: 'Tech earnings beat expectations', sentiment: 0.6, category: 'earnings' },
+            { title: 'Oil prices rise on supply concerns', sentiment: -0.2, category: 'geopolitical' },
+            { title: 'Jobs report beats consensus', sentiment: 0.4, category: 'macro' },
+            { title: 'NVIDIA surges on AI chip demand', sentiment: 0.7, category: 'tech' },
+            { title: 'Treasury yields climb', sentiment: -0.2, category: 'bonds' },
+            { title: 'Consumer confidence rises', sentiment: 0.3, category: 'macro' },
+            { title: 'Semiconductor rally on AI outlook', sentiment: 0.55, category: 'tech' },
+            { title: 'S&P 500 earnings beat rate at 78%', sentiment: 0.5, category: 'earnings' },
+            { title: 'Put/call ratio elevated ahead of FOMC', sentiment: -0.35, category: 'sentiment' },
         ];
 
-        // Shuffle and pick 8-10
         const shuffled = headlines.sort(() => Math.random() - 0.5);
-        const count = 8 + Math.floor(Math.random() * 3);
-        return shuffled.slice(0, count).map((h, i) => ({
+        return shuffled.slice(0, 7).map((h, i) => ({
             ...h,
             time: Date.now() - i * 15 * 60_000 - Math.random() * 30 * 60_000,
         }));
     }
-
-    // ── Public API ─────────────────────────────────────────────────────
 
     const SYMBOLS = ['SPY', '^VIX', 'QQQ', 'IWM', 'XLF', 'XLE', 'XLK', 'XLV', 'XLI', 'XLU',
                      'USO', 'TLT', 'GLD', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA'];
@@ -230,7 +210,6 @@ const DataEngine = (() => {
     async function fetchAllQuotes() {
         const live = await yahooQuote(SYMBOLS);
         if (live && Object.keys(live).length > 5) return live;
-        // Fallback to simulated
         console.log('[DataEngine] Using simulated quote data');
         return generateSimulatedQuotes();
     }
@@ -238,42 +217,26 @@ const DataEngine = (() => {
     async function fetchPriceChart(symbol = 'SPY', range = '5d', interval = '5m') {
         const live = await yahooChart(symbol, range, interval);
         if (live && live.length > 10) return live;
-        // Fallback
         console.log(`[DataEngine] Using simulated chart for ${symbol}`);
         const dayMap = { '1d': 1, '5d': 5, '1mo': 22, '3mo': 66 };
         const intMap = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 390 };
-        return generateSimulatedChart(
-            656, dayMap[range] || 5, intMap[interval] || 5
-        );
+        return generateSimulatedChart(659, dayMap[range] || 5, intMap[interval] || 5);
     }
 
-    function fetchNews() {
-        // In production you'd call a news API with sentiment scoring.
-        // For this demo we use realistic simulated headlines.
-        return generateSimulatedNews();
-    }
+    function fetchNews() { return generateSimulatedNews(); }
 
     function getMarketStatus() {
         const now = new Date();
         const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const day = ny.getDay();
-        const hour = ny.getHours();
-        const min = ny.getMinutes();
-        const timeDecimal = hour + min / 60;
-
-        if (day === 0 || day === 6) return { status: 'closed', label: 'Market Closed' };
-        if (timeDecimal < 4) return { status: 'closed', label: 'Market Closed' };
-        if (timeDecimal < 9.5) return { status: 'premarket', label: 'Pre-Market' };
-        if (timeDecimal < 16) return { status: 'open', label: 'Market Open' };
-        if (timeDecimal < 20) return { status: 'afterhours', label: 'After Hours' };
-        return { status: 'closed', label: 'Market Closed' };
+        const t = ny.getHours() + ny.getMinutes() / 60;
+        if (day === 0 || day === 6) return { status: 'closed', label: 'Closed' };
+        if (t < 4) return { status: 'closed', label: 'Closed' };
+        if (t < 9.5) return { status: 'premarket', label: 'Pre-Market' };
+        if (t < 16) return { status: 'open', label: 'Open' };
+        if (t < 20) return { status: 'afterhours', label: 'After Hours' };
+        return { status: 'closed', label: 'Closed' };
     }
 
-    return {
-        fetchAllQuotes,
-        fetchPriceChart,
-        fetchNews,
-        getMarketStatus,
-        SYMBOLS,
-    };
+    return { fetchAllQuotes, fetchPriceChart, fetchNews, getMarketStatus, SYMBOLS };
 })();
