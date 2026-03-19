@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPY 0DTE Options Predictor — Quant Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>SPY 0DTE Predictor</h1>
+            <span class="subtitle">Multi-Factor Quantitative Analysis Engine</span>
+        </div>
+        <div class="header-right">
+            <div class="market-status" id="marketStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Loading...</span>
+            </div>
+            <div class="last-update" id="lastUpdate"></div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Top Row: Key Metrics -->
+        <section class="metrics-row">
+            <div class="metric-card signal-card" id="signalCard">
+                <div class="metric-label">0DTE SIGNAL</div>
+                <div class="metric-value" id="signalDirection">—</div>
+                <div class="metric-sub" id="signalConfidence"></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">SPY PRICE</div>
+                <div class="metric-value" id="spyPrice">—</div>
+                <div class="metric-sub" id="spyChange"></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">VIX</div>
+                <div class="metric-value" id="vixValue">—</div>
+                <div class="metric-sub" id="vixChange"></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">PREDICTED RANGE</div>
+                <div class="metric-value" id="predictedRange">—</div>
+                <div class="metric-sub" id="rangeConfidence"></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">OPTIMAL STRIKE</div>
+                <div class="metric-value" id="optimalStrike">—</div>
+                <div class="metric-sub" id="strikeType"></div>
+            </div>
+        </section>
+
+        <!-- Charts Row -->
+        <section class="charts-row">
+            <div class="chart-container wide">
+                <div class="chart-header">
+                    <h3>SPY Price Action & Prediction</h3>
+                    <div class="chart-controls">
+                        <button class="btn active" data-range="1D">1D</button>
+                        <button class="btn" data-range="5D">5D</button>
+                        <button class="btn" data-range="1M">1M</button>
+                        <button class="btn" data-range="3M">3M</button>
+                    </div>
+                </div>
+                <canvas id="priceChart"></canvas>
+            </div>
+            <div class="chart-container narrow">
+                <div class="chart-header">
+                    <h3>Signal Strength Breakdown</h3>
+                </div>
+                <canvas id="signalChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Factor Analysis Row -->
+        <section class="factors-row">
+            <div class="panel">
+                <h3>Multi-Factor Scoring</h3>
+                <div class="factor-list" id="factorList">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="panel">
+                <h3>Technical Indicators</h3>
+                <div class="indicator-grid" id="technicalIndicators">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="panel">
+                <h3>Macro & Sentiment</h3>
+                <div class="news-feed" id="newsFeed">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Options Strategy Row -->
+        <section class="strategy-row">
+            <div class="panel wide">
+                <h3>0DTE Options Strategy Recommendation</h3>
+                <div class="strategy-content" id="strategyContent">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="panel narrow">
+                <h3>Risk Dashboard</h3>
+                <canvas id="riskGauge"></canvas>
+                <div class="risk-details" id="riskDetails"></div>
+            </div>
+        </section>
+
+        <!-- Historical Performance -->
+        <section class="performance-row">
+            <div class="panel full">
+                <h3>Model Backtest Performance (Simulated)</h3>
+                <canvas id="performanceChart"></canvas>
+                <div class="performance-stats" id="performanceStats"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p><strong>Disclaimer:</strong> This tool is for educational and informational purposes only.
+        0DTE options are extremely risky. Past performance does not guarantee future results.
+        This is not financial advice. Always do your own research and consult a financial advisor.</p>
+    </footer>
+
+    <script src="data-engine.js"></script>
+    <script src="technical-analysis.js"></script>
+    <script src="prediction-engine.js"></script>
+    <script src="options-strategy.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
