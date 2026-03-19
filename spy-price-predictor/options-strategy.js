@@ -60,7 +60,8 @@ const OptionsStrategy = (() => {
 
         let recommendation = null;
 
-        if (direction !== 'NEUTRAL' && confidence > 20) {
+        // No recommendations in the last 15 min — 0DTE that close to expiry is pure gambling
+        if (direction !== 'NEUTRAL' && confidence > 20 && hoursToClose > 0.25) {
             const type = direction === 'CALL' ? 'call' : 'put';
             // Pick strike: slightly OTM for better risk/reward
             const offset = direction === 'CALL' ? atr * 0.15 : -atr * 0.15;
@@ -87,11 +88,13 @@ const OptionsStrategy = (() => {
         }
 
         let timing;
-        if (hoursToClose > 5) timing = 'Wait for 9:45-10:15 ET opening range';
-        else if (hoursToClose > 3) timing = 'Good entry window — look for VWAP test';
-        else if (hoursToClose > 1.5) timing = 'Theta accelerating — tighten stops';
-        else if (hoursToClose > 0.5) timing = 'Power hour — high conviction only';
-        else timing = 'Close all positions — no new entries';
+        if (hoursToClose > 5.5) timing = 'Opening in progress — wait for 9:45-10:15 ET range to form';
+        else if (hoursToClose > 4.5) timing = 'Opening range established — prime entry window';
+        else if (hoursToClose > 3) timing = 'Mid-day — look for VWAP retest or breakout';
+        else if (hoursToClose > 1.5) timing = 'Theta accelerating — tighten stops, reduce size';
+        else if (hoursToClose > 0.5) timing = 'Power hour — high conviction only, tight stops';
+        else if (hoursToClose > 0.25) timing = 'Final 15 min — close all positions';
+        else timing = 'Market closing — no new entries';
 
         return {
             recommendation,

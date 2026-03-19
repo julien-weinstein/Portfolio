@@ -294,17 +294,99 @@ const DataEngine = (() => {
 
     function isUsingSimulatedData() { return _usingSimulated; }
 
+    // US market holidays (observed dates, month is 0-indexed)
+    function isMarketHoliday(ny) {
+        const y = ny.getFullYear(), m = ny.getMonth(), d = ny.getDate(), dow = ny.getDay();
+        // Fixed holidays (observed: if Sat→Fri, if Sun→Mon)
+        const fixed = [[0,1],[6,4],[12,25]]; // New Year, July 4, Christmas (month+1 for readability)
+        // Actually let's just list known holidays for current + next year
+        // MLK: 3rd Mon Jan, Presidents: 3rd Mon Feb, Good Friday: varies,
+        // Memorial: last Mon May, Juneteenth: Jun 19, Labor: 1st Mon Sep,
+        // Thanksgiving: 4th Thu Nov
+        const nthDow = (month, weekday, n) => {
+            const first = new Date(y, month, 1);
+            let day = first.getDay();
+            let date = 1 + ((weekday - day + 7) % 7) + (n - 1) * 7;
+            return date;
+        };
+        const lastDow = (month, weekday) => {
+            const last = new Date(y, month + 1, 0);
+            const diff = (last.getDay() - weekday + 7) % 7;
+            return last.getDate() - diff;
+        };
+        const holidays = [
+            [0, 1],                          // New Year's Day
+            [0, nthDow(0, 1, 3)],            // MLK Day
+            [1, nthDow(1, 1, 3)],            // Presidents Day
+            [4, lastDow(4, 1)],              // Memorial Day
+            [5, 19],                          // Juneteenth
+            [6, 4],                           // Independence Day
+            [8, nthDow(8, 1, 1)],            // Labor Day
+            [10, nthDow(10, 4, 4)],          // Thanksgiving
+            [11, 25],                         // Christmas
+        ];
+        // Check observed: if holiday falls on Sat, observed Fri; Sun, observed Mon
+        for (const [hm, hd] of holidays) {
+            const hDate = new Date(y, hm, hd);
+            let obsD = hd, obsM = hm;
+            if (hDate.getDay() === 6) { obsD--; } // Saturday → Friday
+            if (hDate.getDay() === 0) { obsD++; } // Sunday → Monday
+            if (m === obsM && d === obsD) return true;
+        }
+        return false;
+    }
+
     function getMarketStatus() {
         const now = new Date();
         const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const day = ny.getDay();
-        const t = ny.getHours() + ny.getMinutes() / 60;
-        if (day === 0 || day === 6) return { status: 'closed', label: 'Closed' };
-        if (t < 4) return { status: 'closed', label: 'Closed' };
-        if (t < 9.5) return { status: 'premarket', label: 'Pre-Market' };
-        if (t < 16) return { status: 'open', label: 'Open' };
-        if (t < 20) return { status: 'afterhours', label: 'After Hours' };
-        return { status: 'closed', label: 'Closed' };
+        const h = ny.getHours();
+        const min = ny.getMinutes();
+        const t = h + min / 60;
+        const holiday = day >= 1 && day <= 5 && isMarketHoliday(ny);
+
+        // Next open calculation
+        function nextOpen() {
+            const next = new Date(ny);
+            if (t >= 9.5 && t < 16 && !holiday && day > 0 && day < 6) {
+                return null; // market is open now
+            }
+            // Advance to next weekday 9:30
+            if (t >= 9.5 || holiday || day === 0 || day === 6) {
+                next.setDate(next.getDate() + 1);
+            }
+            while (next.getDay() === 0 || next.getDay() === 6 || isMarketHoliday(next)) {
+                next.setDate(next.getDate() + 1);
+            }
+            next.setHours(9, 30, 0, 0);
+            return next;
+        }
+
+        function timeUntil(target) {
+            if (!target) return '';
+            const diff = target - ny;
+            if (diff <= 0) return '';
+            const hrs = Math.floor(diff / 3600000);
+            const mins = Math.floor((diff % 3600000) / 60000);
+            if (hrs > 24) {
+                const days = Math.floor(hrs / 24);
+                return `${days}d ${hrs % 24}h`;
+            }
+            return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        }
+
+        const no = nextOpen();
+        const opensIn = timeUntil(no);
+        const hoursToClose = Math.max(0, 16 - t);
+        const minutesToClose = Math.max(0, Math.round(hoursToClose * 60));
+
+        if (day === 0 || day === 6) return { status: 'closed', label: 'Weekend', opensIn, session: 'closed' };
+        if (holiday) return { status: 'closed', label: 'Holiday', opensIn, session: 'closed' };
+        if (t < 4) return { status: 'closed', label: 'Closed', opensIn, session: 'closed' };
+        if (t < 9.5) return { status: 'premarket', label: 'Pre-Market', opensIn, session: 'premarket' };
+        if (t < 16) return { status: 'open', label: 'Open', hoursToClose, minutesToClose, session: 'regular' };
+        if (t < 20) return { status: 'afterhours', label: 'After Hours', opensIn, session: 'afterhours' };
+        return { status: 'closed', label: 'Closed', opensIn, session: 'closed' };
     }
 
     return { fetchAllQuotes, fetchPriceChart, fetchNews, getMarketStatus, isUsingSimulatedData, SYMBOLS };

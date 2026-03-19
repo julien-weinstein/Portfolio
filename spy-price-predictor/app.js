@@ -1,29 +1,73 @@
 /**
- * App — Main controller (simplified)
+ * App — Main controller
+ *
+ * Market-session aware: adjusts UI, recommendations, and refresh rate
+ * based on whether market is open, pre-market, after-hours, or closed.
  */
 (async function () {
     'use strict';
 
     let quotes = {}, chartData = [], ta = null, prediction = null, news = [], strategy = null;
     let priceChart = null;
+    let marketStatus = null;
+    let refreshTimer = null;
+
+    function hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r},${g},${b},${alpha})`;
+    }
 
     async function init() {
-        updateMarketStatus();
+        marketStatus = DataEngine.getMarketStatus();
+        updateMarketStatusUI();
         await refresh();
-        setInterval(updateMarketStatus, 30_000);
-        setInterval(refresh, 60_000);
+        setInterval(updateMarketStatusAndSchedule, 30_000);
+        scheduleRefresh();
+    }
+
+    function scheduleRefresh() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        const s = marketStatus?.session;
+        // Faster polling during market hours, slower otherwise
+        const interval = s === 'regular' ? 60_000
+            : s === 'premarket' ? 90_000
+            : s === 'afterhours' ? 120_000
+            : 300_000; // closed: every 5 min
+        refreshTimer = setInterval(refresh, interval);
+    }
+
+    function updateMarketStatusAndSchedule() {
+        const prev = marketStatus?.session;
+        marketStatus = DataEngine.getMarketStatus();
+        updateMarketStatusUI();
+        // Re-schedule if session changed (e.g. pre-market → open)
+        if (marketStatus.session !== prev) {
+            scheduleRefresh();
+            refresh(); // immediate refresh on session change
+        }
     }
 
     async function refresh() {
         try {
+            marketStatus = DataEngine.getMarketStatus();
             [quotes, news] = await Promise.all([
                 DataEngine.fetchAllQuotes(),
                 Promise.resolve(DataEngine.fetchNews()),
             ]);
             chartData = await DataEngine.fetchPriceChart('SPY', '1d', '5m');
             ta = TechnicalAnalysis.analyze(chartData);
-            prediction = PredictionEngine.predict(ta, quotes, news);
-            strategy = OptionsStrategy.generateStrategy(prediction);
+
+            // Only run prediction/strategy during actionable sessions
+            if (marketStatus.session === 'regular') {
+                prediction = PredictionEngine.predict(ta, quotes, news);
+                strategy = OptionsStrategy.generateStrategy(prediction);
+            } else {
+                prediction = null;
+                strategy = null;
+            }
+
             render();
             document.getElementById('lastUpdate').textContent =
                 new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' ET';
@@ -32,16 +76,26 @@
         }
     }
 
-    function updateMarketStatus() {
-        const s = DataEngine.getMarketStatus();
+    function updateMarketStatusUI() {
+        const s = marketStatus || DataEngine.getMarketStatus();
         const el = document.getElementById('marketStatus');
-        el.querySelector('.status-text').textContent = s.label;
+        let label = s.label;
+        if (s.opensIn && s.session !== 'regular') {
+            label += ` · Opens in ${s.opensIn}`;
+        }
+        if (s.session === 'regular' && s.minutesToClose != null) {
+            const h = Math.floor(s.minutesToClose / 60);
+            const m = s.minutesToClose % 60;
+            label += ` · ${h}h ${m}m to close`;
+        }
+        el.querySelector('.status-text').textContent = label;
         el.className = 'market-status ' + s.status;
     }
 
     function render() {
         renderPriceBar();
         renderRecommendation();
+        renderTimingBar();
         renderChart();
         renderFactors();
     }
@@ -49,32 +103,95 @@
     function renderPriceBar() {
         const spy = quotes.SPY;
         if (!spy) return;
-        document.getElementById('spyPrice').textContent = '$' + spy.price?.toFixed(2);
+
+        const priceEl = document.getElementById('spyPrice');
+        const prevPrice = priceEl.textContent;
+        const newPrice = '$' + spy.price?.toFixed(2);
+        priceEl.textContent = newPrice;
+
+        // Flash on price change
+        if (prevPrice !== '—' && prevPrice !== newPrice) {
+            priceEl.classList.add('flash');
+            setTimeout(() => priceEl.classList.remove('flash'), 600);
+        }
+
         const ch = document.getElementById('spyChange');
-        ch.textContent = `${spy.change > 0 ? '+' : ''}${spy.change?.toFixed(2)} (${spy.changePct > 0 ? '+' : ''}${spy.changePct?.toFixed(2)}%)`;
+        const session = marketStatus?.session;
+        let changePrefix = '';
+        if (session === 'premarket') changePrefix = 'PM ';
+        else if (session === 'afterhours') changePrefix = 'AH ';
+
+        ch.textContent = `${changePrefix}${spy.change > 0 ? '+' : ''}${spy.change?.toFixed(2)} (${spy.changePct > 0 ? '+' : ''}${spy.changePct?.toFixed(2)}%)`;
         ch.className = 'price-change ' + (spy.change >= 0 ? 'up' : 'down');
 
         const vix = quotes['^VIX'];
         if (vix) document.getElementById('vixValue').textContent = vix.price?.toFixed(1);
-        if (strategy) document.getElementById('ivValue').textContent = strategy.iv + '%';
-        if (prediction) document.getElementById('rangeValue').textContent =
-            '$' + prediction.predictedLow + ' – $' + prediction.predictedHigh;
+
+        if (strategy) {
+            document.getElementById('ivValue').textContent = strategy.iv + '%';
+        } else {
+            document.getElementById('ivValue').textContent = '—';
+        }
+
+        if (prediction) {
+            document.getElementById('rangeValue').textContent =
+                '$' + prediction.predictedLow + ' – $' + prediction.predictedHigh;
+        } else {
+            document.getElementById('rangeValue').textContent = '—';
+        }
     }
 
     function renderRecommendation() {
-        if (!prediction || !strategy) return;
         const card = document.getElementById('recCard');
         const signal = document.getElementById('recSignal');
         const details = document.getElementById('recDetails');
-        const timing = document.getElementById('timingBar');
+        const session = marketStatus?.session;
+
+        // ── Non-trading sessions: show appropriate message ──
+        if (session !== 'regular') {
+            card.className = 'rec-card session-info';
+            if (session === 'premarket') {
+                signal.innerHTML = `<span class="session-icon">&#9788;</span> PRE-MARKET`;
+                const opensIn = marketStatus.opensIn || '';
+                details.innerHTML = `
+                    <div class="rec-reason">0DTE options begin trading at <b>9:30 AM ET</b>.</div>
+                    ${opensIn ? `<div class="session-countdown">Market opens in <b>${opensIn}</b></div>` : ''}
+                    <div class="session-hint">Pre-market data is being collected for the opening analysis.</div>
+                `;
+            } else if (session === 'afterhours') {
+                signal.innerHTML = `<span class="session-icon">&#9790;</span> AFTER HOURS`;
+                details.innerHTML = `
+                    <div class="rec-reason">Today's 0DTE contracts have <b>expired</b>.</div>
+                    <div class="session-hint">After-hours price shown above. No 0DTE recommendations until next market open.</div>
+                `;
+            } else {
+                // closed (weekend, holiday, overnight)
+                const label = marketStatus?.label || 'Closed';
+                signal.innerHTML = `<span class="session-icon">&#9211;</span> MARKET ${label.toUpperCase()}`;
+                const opensIn = marketStatus.opensIn || '';
+                details.innerHTML = `
+                    <div class="rec-reason">0DTE options are not available outside regular trading hours.</div>
+                    ${opensIn ? `<div class="session-countdown">Next session opens in <b>${opensIn}</b></div>` : ''}
+                    <div class="session-hint">Showing last available closing data above.</div>
+                `;
+            }
+            return;
+        }
+
+        // ── Regular session ──
+        if (!prediction || !strategy) {
+            card.className = 'rec-card';
+            signal.textContent = 'ANALYZING...';
+            details.innerHTML = '';
+            return;
+        }
+
         const rec = strategy.recommendation;
 
         if (!rec) {
             card.className = 'rec-card neutral';
             signal.textContent = 'NO TRADE';
             details.innerHTML = '<div class="rec-reason">Signals are mixed — sit this one out.</div>';
-            timing.textContent = strategy.timing;
-            timing.className = 'timing-bar';
             return;
         }
 
@@ -112,9 +229,25 @@
                 <span>Risk: <b>${prediction.riskLevel}</b></span>
             </div>
         `;
+    }
 
-        timing.textContent = strategy.timing;
-        timing.className = 'timing-bar ' + (strategy.hoursToClose < 1 ? 'warn' : '');
+    function renderTimingBar() {
+        const timing = document.getElementById('timingBar');
+        const session = marketStatus?.session;
+
+        if (session !== 'regular') {
+            timing.textContent = '';
+            timing.className = 'timing-bar hidden';
+            return;
+        }
+
+        if (strategy) {
+            timing.textContent = strategy.timing;
+            timing.className = 'timing-bar ' + (strategy.hoursToClose < 1 ? 'warn' : '');
+        } else {
+            timing.textContent = '';
+            timing.className = 'timing-bar hidden';
+        }
     }
 
     function renderChart() {
@@ -126,13 +259,19 @@
 
         if (priceChart) priceChart.destroy();
 
+        const session = marketStatus?.session;
+        const lineColor = session === 'regular' ? '#00d4ff'
+            : session === 'premarket' ? '#ffcc00'
+            : session === 'afterhours' ? '#8866ff'
+            : '#556677';
+
         priceChart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'SPY', data: closes, borderColor: '#00d4ff', backgroundColor: 'rgba(0,212,255,0.04)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1 },
-                    { label: 'VWAP', data: vwap, borderColor: 'rgba(255,165,0,0.6)', borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false },
+                    { label: 'SPY', data: closes, borderColor: lineColor, backgroundColor: hexToRgba(lineColor, 0.04), borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1 },
+                    ...(session === 'regular' ? [{ label: 'VWAP', data: vwap, borderColor: 'rgba(255,165,0,0.6)', borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false }] : []),
                 ],
             },
             options: {
@@ -151,7 +290,15 @@
     }
 
     function renderFactors() {
-        if (!prediction) return;
+        const panel = document.querySelector('.factors-panel');
+        const list = document.getElementById('factorList');
+
+        if (!prediction || marketStatus?.session !== 'regular') {
+            panel.style.display = 'none';
+            return;
+        }
+        panel.style.display = '';
+
         const names = {
             technical: 'Technical', volatility: 'Volatility', crossAsset: 'Cross-Asset',
             sector: 'Sectors', megaCap: 'Mega-Caps', sentiment: 'Sentiment',
@@ -179,7 +326,7 @@
             `;
         });
 
-        document.getElementById('factorList').innerHTML = html;
+        list.innerHTML = html;
     }
 
     init();
