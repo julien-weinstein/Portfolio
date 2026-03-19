@@ -17,7 +17,7 @@
     let priceChart = null;
     let signalChart = null;
     let performanceChart = null;
-    let selectedRange = '5D';
+    let selectedRange = '1D';
 
     const rangeMap = {
         '1D': { range: '1d', interval: '5m' },
