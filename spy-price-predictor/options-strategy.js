@@ -1,14 +1,13 @@
 /**
- * Options Strategy Engine — 0DTE Single-Option Plays
+ * Options Strategy Engine — 0DTE Strike Picker
  *
- * Generates one simple recommendation: buy a call or buy a put.
- * Shows the strike price, estimated premium, probability of profit,
- * and key levels. No spreads, no condors — just one option.
+ * Generates 3 strike choices (conservative/moderate/aggressive) for a
+ * single call or put. Each shows probability ITM, expected value, and
+ * risk/reward. The user picks their risk appetite.
  */
 
 const OptionsStrategy = (() => {
 
-    // ── Black-Scholes helpers ────────────────────────────────────────
     function normalCDF(x) {
         const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
         const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
@@ -23,10 +22,9 @@ const OptionsStrategy = (() => {
         if (T <= 0) T = 0.0001;
         const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
         const d2 = d1 - sigma * Math.sqrt(T);
-        if (type === 'call') {
-            return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
-        }
-        return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+        return type === 'call'
+            ? S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2)
+            : K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
     }
 
     function estimateGreeks(S, K, T, r, sigma, type = 'call') {
@@ -34,31 +32,31 @@ const OptionsStrategy = (() => {
         const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
         const d2 = d1 - sigma * Math.sqrt(T);
         const nd1 = Math.exp(-d1 * d1 / 2) / Math.sqrt(2 * Math.PI);
-
         const delta = type === 'call' ? normalCDF(d1) : normalCDF(d1) - 1;
         const gamma = nd1 / (S * sigma * Math.sqrt(T));
         const theta = (-(S * sigma * nd1) / (2 * Math.sqrt(T)) -
                        (type === 'call' ? 1 : -1) * r * K * Math.exp(-r * T) *
                        normalCDF((type === 'call' ? 1 : -1) * d2)) / 365;
         const vega = S * nd1 * Math.sqrt(T) / 100;
-
         return { delta: +delta.toFixed(3), gamma: +gamma.toFixed(4), theta: +theta.toFixed(3), vega: +vega.toFixed(3) };
     }
 
-    // Probability that option expires ITM (using Black-Scholes d2)
     function probITM(S, K, T, r, sigma, type = 'call') {
         if (T <= 0) T = 0.0001;
         const d2 = (Math.log(S / K) + (r - sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
         return type === 'call' ? normalCDF(d2) : normalCDF(-d2);
     }
 
-    // Probability that option reaches a profit target
-    function probProfit(S, K, premium, T, r, sigma, type = 'call') {
-        const breakeven = type === 'call' ? K + premium : K - premium;
-        return probITM(S, breakeven, T, r, sigma, type);
+    // Expected value = (prob of profit * avg win) - (prob of loss * premium)
+    // Using simplified model: if ITM, avg payoff ~ half the expected move beyond strike
+    function expectedValue(S, K, premium, T, r, sigma, type, expectedMove) {
+        const pItm = probITM(S, K, T, r, sigma, type);
+        const beyondStrike = type === 'call' ? (S + expectedMove * 0.5 - K) : (K - (S - expectedMove * 0.5));
+        const avgWinPayoff = Math.max(0, beyondStrike) - premium;
+        const ev = pItm * avgWinPayoff - (1 - pItm) * premium;
+        return +ev.toFixed(2);
     }
 
-    // ── 0DTE IV premium — closer to expiry = higher IV ──────────────
     function zdteIvPremium(hoursLeft) {
         if (hoursLeft > 5) return 0.2;
         if (hoursLeft > 3) return 0.35;
@@ -66,7 +64,6 @@ const OptionsStrategy = (() => {
         return 0.8;
     }
 
-    // ── Strategy Generation ──────────────────────────────────────────
     function generateStrategy(prediction) {
         const { direction, confidence, currentPrice, atr, riskLevel,
                 predictedHigh, predictedLow, predictedClose } = prediction;
@@ -75,101 +72,91 @@ const OptionsStrategy = (() => {
         const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const marketHour = ny.getHours() + ny.getMinutes() / 60;
         const hoursToClose = Math.max(0.1, 16 - marketHour);
-        const T = hoursToClose / (252 * 6.5); // annualized time remaining
+        const T = hoursToClose / (252 * 6.5);
 
-        // VIX-based IV estimate
         const vix = prediction.factors?.volatility?.details?.find(d => d.name === 'VIX Level');
         const ivBase = vix ? parseFloat(vix.value) / 100 : 0.18;
         const iv = ivBase * (1 + zdteIvPremium(hoursToClose));
         const r = 0.053;
         const roundStrike = (s) => Math.round(s);
 
+        const expectedMove = atr * (1 + Math.abs(prediction.composite) * 0.5);
+
         const strategies = [];
 
-        if (direction === 'CALL' && confidence > 20) {
-            // Pick strike: slightly OTM for better risk/reward
-            const strike = roundStrike(currentPrice + atr * 0.2);
-            const premium = blackScholes(currentPrice, strike, T, r, iv, 'call');
-            const greeks = estimateGreeks(currentPrice, strike, T, r, iv, 'call');
+        if (direction !== 'NEUTRAL' && confidence > 15) {
+            const type = direction === 'CALL' ? 'call' : 'put';
+            const label = direction === 'CALL' ? 'C' : 'P';
+            const targetPrice = direction === 'CALL' ? predictedHigh : predictedLow;
 
-            // Probability calculations
-            const pItm = probITM(currentPrice, strike, T, r, iv, 'call');
-            const pProfit = probProfit(currentPrice, strike, premium, T, r, iv, 'call');
+            // 3 strike levels
+            const offsets = direction === 'CALL'
+                ? [0, atr * 0.25, atr * 0.5]     // ATM, slightly OTM, more OTM
+                : [0, -atr * 0.25, -atr * 0.5];
 
-            strategies.push({
-                name: `Buy ${strike}C (0DTE)`,
-                type: 'CALL',
-                strike,
-                premium: +premium.toFixed(2),
-                greeks,
-                breakeven: +(strike + premium).toFixed(2),
-                maxRisk: +premium.toFixed(2),
-                target: +(premium * 2).toFixed(2),
-                stopLoss: +(premium * 0.4).toFixed(2),
-                probITM: +(pItm * 100).toFixed(0),
-                probProfit: +(pProfit * 100).toFixed(0),
-                rationale: `Model predicts move toward $${predictedHigh}. Buy the ${strike} call, risk $${premium.toFixed(2)} per contract.`,
+            const labels = ['Conservative (ATM)', 'Moderate (Slightly OTM)', 'Aggressive (OTM)'];
+            const tiers = ['conservative', 'moderate', 'aggressive'];
+
+            offsets.forEach((offset, i) => {
+                const strike = roundStrike(currentPrice + offset);
+                const premium = Math.max(0.01, blackScholes(currentPrice, strike, T, r, iv, type));
+                const greeks = estimateGreeks(currentPrice, strike, T, r, iv, type);
+                const pItm = probITM(currentPrice, strike, T, r, iv, type);
+                const breakeven = type === 'call' ? strike + premium : strike - premium;
+                const pBreakeven = probITM(currentPrice, breakeven, T, r, iv, type);
+                const ev = expectedValue(currentPrice, strike, premium, T, r, iv, type, expectedMove);
+
+                strategies.push({
+                    name: `${strike}${label}`,
+                    tier: tiers[i],
+                    tierLabel: labels[i],
+                    type: direction,
+                    strike,
+                    premium: +premium.toFixed(2),
+                    greeks,
+                    breakeven: +breakeven.toFixed(2),
+                    maxRisk: +premium.toFixed(2),
+                    target: +(premium * 2).toFixed(2),
+                    stopLoss: +(premium * 0.4).toFixed(2),
+                    probITM: Math.round(pItm * 100),
+                    probProfit: Math.round(pBreakeven * 100),
+                    ev,
+                    targetPrice: +targetPrice,
+                });
             });
         }
 
-        if (direction === 'PUT' && confidence > 20) {
-            const strike = roundStrike(currentPrice - atr * 0.2);
-            const premium = blackScholes(currentPrice, strike, T, r, iv, 'put');
-            const greeks = estimateGreeks(currentPrice, strike, T, r, iv, 'put');
-
-            const pItm = probITM(currentPrice, strike, T, r, iv, 'put');
-            const pProfit = probProfit(currentPrice, strike, premium, T, r, iv, 'put');
-
+        if (strategies.length === 0) {
             strategies.push({
-                name: `Buy ${strike}P (0DTE)`,
-                type: 'PUT',
-                strike,
-                premium: +premium.toFixed(2),
-                greeks,
-                breakeven: +(strike - premium).toFixed(2),
-                maxRisk: +premium.toFixed(2),
-                target: +(premium * 2).toFixed(2),
-                stopLoss: +(premium * 0.4).toFixed(2),
-                probITM: +(pItm * 100).toFixed(0),
-                probProfit: +(pProfit * 100).toFixed(0),
-                rationale: `Model predicts drop toward $${predictedLow}. Buy the ${strike} put, risk $${premium.toFixed(2)} per contract.`,
-            });
-        }
-
-        if (direction === 'NEUTRAL' || confidence < 20) {
-            // No strong signal — show a low-conviction ATM call as reference
-            const strike = roundStrike(currentPrice);
-            const callPrem = blackScholes(currentPrice, strike, T, r, iv, 'call');
-            const pItm = probITM(currentPrice, strike, T, r, iv, 'call');
-
-            strategies.push({
-                name: `No Clear Signal`,
+                name: 'No Trade',
+                tier: 'neutral',
+                tierLabel: 'No Clear Signal',
                 type: 'NEUTRAL',
-                strike,
-                premium: +callPrem.toFixed(2),
-                greeks: estimateGreeks(currentPrice, strike, T, r, iv, 'call'),
-                breakeven: +(strike + callPrem).toFixed(2),
-                maxRisk: +callPrem.toFixed(2),
+                strike: roundStrike(currentPrice),
+                premium: 0,
+                greeks: { delta: 0, gamma: 0, theta: 0, vega: 0 },
+                breakeven: 0,
+                maxRisk: 0,
                 target: 0,
                 stopLoss: 0,
-                probITM: +(pItm * 100).toFixed(0),
+                probITM: 0,
                 probProfit: 0,
-                rationale: `Signals are mixed — no high-conviction 0DTE play right now. Consider sitting this one out.`,
+                ev: 0,
+                targetPrice: currentPrice,
             });
         }
 
-        // Timing advice
         let timingAdvice;
         if (hoursToClose > 5) {
-            timingAdvice = 'Early session — wait for 9:45-10:15 AM ET for opening range before entering.';
+            timingAdvice = 'Wait for 9:45-10:15 AM ET opening range before entering.';
         } else if (hoursToClose > 3) {
-            timingAdvice = 'Mid-morning — good entry window. Look for a pullback to VWAP.';
+            timingAdvice = 'Good entry window. Look for a pullback to VWAP.';
         } else if (hoursToClose > 1.5) {
-            timingAdvice = 'Afternoon — theta accelerating. Tighten stops, close at 50% profit.';
+            timingAdvice = 'Theta accelerating. Tighten stops, close at 50% profit.';
         } else if (hoursToClose > 0.5) {
-            timingAdvice = 'Power hour — maximum theta decay. Only high-conviction entries.';
+            timingAdvice = 'Power hour. Only high-conviction entries. Close by 3:30.';
         } else {
-            timingAdvice = 'Final 30 min — close all positions. Avoid new entries.';
+            timingAdvice = 'Final 30 min. Close all positions. No new entries.';
         }
 
         return {
@@ -177,15 +164,14 @@ const OptionsStrategy = (() => {
             timingAdvice,
             hoursToClose: +hoursToClose.toFixed(2),
             iv: +(iv * 100).toFixed(1),
+            expectedMove: +expectedMove.toFixed(2),
         };
     }
 
-    // ── Backtest Simulation ──────────────────────────────────────────
     function generateBacktestData() {
         const days = 60;
         const results = [];
-        let cumPnL = 0;
-        let wins = 0, losses = 0;
+        let cumPnL = 0, wins = 0, losses = 0;
 
         for (let i = 0; i < days; i++) {
             const date = new Date();
@@ -196,7 +182,6 @@ const OptionsStrategy = (() => {
             const magnitude = isWin
                 ? 0.5 + Math.random() * 2.5
                 : -(0.3 + Math.random() * 1.5);
-
             cumPnL += magnitude;
             if (isWin) wins++; else losses++;
 
@@ -204,15 +189,12 @@ const OptionsStrategy = (() => {
                 date: date.toISOString().split('T')[0],
                 pnl: +magnitude.toFixed(2),
                 cumPnl: +cumPnL.toFixed(2),
-                signal: Math.random() > 0.5 ? 'CALL' : 'PUT',
             });
         }
 
         const winRate = wins / (wins + losses);
         const avgWin = results.filter(r => r.pnl > 0).reduce((s, r) => s + r.pnl, 0) / wins;
         const avgLoss = results.filter(r => r.pnl < 0).reduce((s, r) => s + r.pnl, 0) / losses;
-        const profitFactor = Math.abs(avgWin * wins) / Math.abs(avgLoss * losses);
-        const sharpe = (cumPnL / days) / (Math.sqrt(results.reduce((s, r) => s + r.pnl ** 2, 0) / days - (cumPnL / days) ** 2) || 1);
 
         return {
             trades: results,
@@ -221,13 +203,13 @@ const OptionsStrategy = (() => {
                 winRate: +(winRate * 100).toFixed(1),
                 avgWin: +avgWin.toFixed(2),
                 avgLoss: +avgLoss.toFixed(2),
-                profitFactor: +profitFactor.toFixed(2),
-                sharpeRatio: +sharpe.toFixed(2),
+                profitFactor: +(Math.abs(avgWin * wins) / Math.abs(avgLoss * losses)).toFixed(2),
+                sharpeRatio: +((cumPnL / days) / (Math.sqrt(results.reduce((s, r) => s + r.pnl ** 2, 0) / days - (cumPnL / days) ** 2) || 1)).toFixed(2),
                 maxDrawdown: +Math.min(...results.map(r => r.cumPnl)).toFixed(2),
                 totalReturn: +cumPnL.toFixed(2),
             },
         };
     }
 
-    return { generateStrategy, generateBacktestData, blackScholes, estimateGreeks };
+    return { generateStrategy, generateBacktestData };
 })();

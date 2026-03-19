@@ -14,7 +14,6 @@
     <header>
         <div class="header-left">
             <h1>SPY 0DTE Predictor</h1>
-            <span class="subtitle">Single-Option Plays with Probability</span>
         </div>
         <div class="header-right">
             <div class="market-status" id="marketStatus">
@@ -26,57 +25,50 @@
     </header>
 
     <main>
-        <!-- Action Banner — Clear buy/sell signal -->
-        <section class="action-banner" id="actionBanner">
-            <div class="action-direction" id="actionDirection">—</div>
-            <div class="action-details">
-                <div class="action-strike" id="actionStrike">Analyzing...</div>
-                <div class="action-conf" id="actionConf"></div>
-                <div class="action-timing" id="actionTiming"></div>
+        <!-- Hero: Signal + Key Numbers -->
+        <section class="hero" id="hero">
+            <div class="hero-signal" id="heroSignal">
+                <div class="hero-direction" id="heroDirection">—</div>
+                <div class="hero-conf" id="heroConf"></div>
             </div>
-            <div class="action-price-target">
-                <div class="action-label">PRICE TARGET</div>
-                <div class="action-target-value" id="actionTarget">—</div>
+            <div class="hero-metrics">
+                <div class="hero-metric">
+                    <div class="hero-metric-label">SPY</div>
+                    <div class="hero-metric-value" id="heroSpyPrice">—</div>
+                    <div class="hero-metric-sub" id="heroSpyChange"></div>
+                </div>
+                <div class="hero-metric">
+                    <div class="hero-metric-label">VIX</div>
+                    <div class="hero-metric-value" id="heroVix">—</div>
+                    <div class="hero-metric-sub" id="heroVixChange"></div>
+                </div>
+                <div class="hero-metric">
+                    <div class="hero-metric-label">PREDICTED RANGE</div>
+                    <div class="hero-metric-value" id="heroRange">—</div>
+                    <div class="hero-metric-sub" id="heroRangeSub"></div>
+                </div>
+                <div class="hero-metric">
+                    <div class="hero-metric-label">0DTE IV</div>
+                    <div class="hero-metric-value" id="heroIV">—</div>
+                    <div class="hero-metric-sub" id="heroTimeSub"></div>
+                </div>
             </div>
+            <div class="hero-timing" id="heroTiming"></div>
         </section>
 
-        <!-- Top Row: Key Metrics -->
-        <section class="metrics-row">
-            <div class="metric-card">
-                <div class="metric-label">SPY PRICE</div>
-                <div class="metric-value" id="spyPrice">—</div>
-                <div class="metric-sub" id="spyChange"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">VIX</div>
-                <div class="metric-value" id="vixValue">—</div>
-                <div class="metric-sub" id="vixChange"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">PREDICTED RANGE</div>
-                <div class="metric-value" id="predictedRange">—</div>
-                <div class="metric-sub" id="rangeConfidence"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">RISK LEVEL</div>
-                <div class="metric-value" id="riskLevelText">—</div>
-                <div class="metric-sub" id="riskSubText"></div>
-            </div>
-        </section>
-
-        <!-- 0DTE Trade Recommendation — Single option -->
-        <section class="trade-section">
-            <h2 class="section-title">0DTE Play <span class="section-subtitle">— Expires Today</span></h2>
-            <div class="trade-cards" id="tradeCards">
+        <!-- Strike Picker — 3 options -->
+        <section class="strike-section">
+            <h2 class="section-title">Pick Your Strike</h2>
+            <div class="strike-table" id="strikeTable">
                 <!-- Populated by JS -->
             </div>
         </section>
 
-        <!-- Charts Row -->
-        <section class="charts-row">
-            <div class="chart-container wide">
+        <!-- Chart -->
+        <section class="chart-section">
+            <div class="chart-container">
                 <div class="chart-header">
-                    <h3>SPY Price Action & Prediction Zones</h3>
+                    <h3>SPY Price Action</h3>
                     <div class="chart-controls">
                         <button class="btn active" data-range="1D">1D</button>
                         <button class="btn" data-range="5D">5D</button>
@@ -86,34 +78,24 @@
                 </div>
                 <canvas id="priceChart"></canvas>
             </div>
-            <div class="chart-container narrow">
-                <div class="chart-header">
-                    <h3>Signal Strength</h3>
-                </div>
-                <canvas id="signalChart"></canvas>
-            </div>
         </section>
 
-        <!-- Factor Analysis Row -->
-        <section class="factors-row">
+        <!-- Analysis: 2-column -->
+        <section class="analysis-row">
             <div class="panel">
-                <h3>Multi-Factor Scoring</h3>
+                <h3>Factor Scores <span class="panel-sub">(click to expand)</span></h3>
                 <div class="factor-list" id="factorList"></div>
             </div>
             <div class="panel">
                 <h3>Technical Indicators</h3>
                 <div class="indicator-grid" id="technicalIndicators"></div>
             </div>
-            <div class="panel">
-                <h3>Macro & Sentiment</h3>
-                <div class="news-feed" id="newsFeed"></div>
-            </div>
         </section>
 
-        <!-- Historical Performance -->
+        <!-- Performance -->
         <section class="performance-row">
             <div class="panel full">
-                <h3>Model Backtest Performance (Simulated)</h3>
+                <h3>Model Backtest (Simulated 60 Day)</h3>
                 <canvas id="performanceChart"></canvas>
                 <div class="performance-stats" id="performanceStats"></div>
             </div>
@@ -121,9 +103,8 @@
     </main>
 
     <footer>
-        <p><strong>Disclaimer:</strong> This tool is for educational and informational purposes only.
-        0DTE options are extremely risky. Past performance does not guarantee future results.
-        This is not financial advice. Always do your own research and consult a financial advisor.</p>
+        <p><strong>Disclaimer:</strong> Educational and informational only.
+        0DTE options are extremely risky. Not financial advice.</p>
     </footer>
 
     <script src="data-engine.js"></script>
