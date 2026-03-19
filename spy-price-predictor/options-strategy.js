@@ -86,7 +86,11 @@ const OptionsStrategy = (() => {
         const pItm = probITM(currentPrice, best.strike, T, r, iv, type);
         const breakeven = type === 'call' ? best.strike + premium : best.strike - premium;
         const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
-        const g = greeks(currentPrice, best.strike, T, r, iv, type);
+
+        // Use real Greeks from Tradier/ORATS if available, otherwise calculate
+        const g = (best.delta != null)
+            ? { delta: +best.delta.toFixed(2), gamma: +(best.gamma || 0).toFixed(4), theta: +(best.theta || 0).toFixed(2) }
+            : greeks(currentPrice, best.strike, T, r, iv, type);
 
         return {
             direction,

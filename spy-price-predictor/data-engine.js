@@ -1,9 +1,9 @@
 /**
  * Data Engine — Live market data via Finnhub + Yahoo CORS proxies.
  *
- * Quotes: Finnhub → Yahoo proxy → Simulated fallback.
- * News:   Finnhub market news → simulated fallback (with keyword sentiment scoring).
- * Options: Yahoo options chain via CORS proxy → estimated fallback.
+ * Quotes:  Finnhub → Yahoo proxy → Simulated fallback.
+ * News:    Finnhub market news → simulated fallback (with keyword sentiment scoring).
+ * Options: Tradier sandbox (CORS, Greeks/IV) → Yahoo proxy → null.
  */
 
 const DataEngine = (() => {
@@ -12,6 +12,8 @@ const DataEngine = (() => {
 
     // Free API keys (public, rate-limited — not secrets)
     const FINNHUB_KEY = 'cvs2p81r01qsfepo4q30cvs2p81r01qsfepo4q3g';
+    // Tradier sandbox — paper trading token, safe to expose (no real money)
+    const TRADIER_SANDBOX_TOKEN = 'qNSxKgkbpFhPbVDMBqCK4AznYO7b';
 
     let _usingSimulated = false;
 
@@ -306,7 +308,107 @@ const DataEngine = (() => {
         }));
     }
 
-    // ── Yahoo options chain via CORS proxy ─────────────────────────
+    // ── Tradier sandbox (primary options — CORS confirmed, 15min delayed) ──
+    async function tradierOptionsChain(symbol = 'SPY') {
+        try {
+            // Get today's expiration date (YYYY-MM-DD)
+            const today = new Date().toISOString().slice(0, 10);
+
+            // First try today (0DTE), then fall back to expirations lookup
+            const chainResp = await fetch(
+                `https://sandbox.tradier.com/v1/markets/options/chains?symbol=${symbol}&expiration=${today}&greeks=true`,
+                {
+                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(8000),
+                }
+            );
+            if (!chainResp.ok) return null;
+            const chainJson = await chainResp.json();
+            const options = chainJson.options?.option;
+            if (!Array.isArray(options) || options.length === 0) {
+                // Today might not have an expiration — get nearest
+                return tradierNearestExpiration(symbol);
+            }
+
+            const calls = options.filter(o => o.option_type === 'call').map(parseTradierOption);
+            const puts = options.filter(o => o.option_type === 'put').map(parseTradierOption);
+
+            if (calls.length === 0 && puts.length === 0) return null;
+
+            const underlying = options[0]?.underlying_price || 0;
+            console.log(`[DataEngine] Tradier 0DTE chain: ${calls.length} calls, ${puts.length} puts`);
+            return { calls, puts, underlying, expiration: today, is0DTE: true, isReal: true, source: 'tradier' };
+        } catch (e) {
+            console.log('[DataEngine] Tradier chain error:', e.message);
+            return null;
+        }
+    }
+
+    async function tradierNearestExpiration(symbol) {
+        try {
+            const resp = await fetch(
+                `https://sandbox.tradier.com/v1/markets/options/expirations?symbol=${symbol}`,
+                {
+                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(6000),
+                }
+            );
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            const dates = json.expirations?.date;
+            if (!Array.isArray(dates) || dates.length === 0) return null;
+
+            // Pick the nearest future expiration
+            const today = new Date().toISOString().slice(0, 10);
+            const nearest = dates.find(d => d >= today) || dates[0];
+
+            const chainResp = await fetch(
+                `https://sandbox.tradier.com/v1/markets/options/chains?symbol=${symbol}&expiration=${nearest}&greeks=true`,
+                {
+                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(8000),
+                }
+            );
+            if (!chainResp.ok) return null;
+            const chainJson = await chainResp.json();
+            const options = chainJson.options?.option;
+            if (!Array.isArray(options) || options.length === 0) return null;
+
+            const calls = options.filter(o => o.option_type === 'call').map(parseTradierOption);
+            const puts = options.filter(o => o.option_type === 'put').map(parseTradierOption);
+            const underlying = options[0]?.underlying_price || 0;
+            const is0DTE = nearest === today;
+
+            console.log(`[DataEngine] Tradier nearest chain (${nearest}): ${calls.length}C / ${puts.length}P`);
+            return { calls, puts, underlying, expiration: nearest, is0DTE, isReal: true, source: 'tradier' };
+        } catch {
+            return null;
+        }
+    }
+
+    function parseTradierOption(o) {
+        const greeks = o.greeks || {};
+        return {
+            strike: o.strike,
+            bid: o.bid || 0,
+            ask: o.ask || 0,
+            mid: +((o.bid + o.ask) / 2).toFixed(2) || o.last || 0,
+            last: o.last || 0,
+            volume: o.volume || 0,
+            openInterest: o.open_interest || 0,
+            impliedVol: greeks.mid_iv || o.implied_volatility || 0,
+            inTheMoney: o.strike ? (o.option_type === 'call' ? o.strike <= (o.underlying_price || 0) : o.strike >= (o.underlying_price || 0)) : false,
+            change: o.change || 0,
+            changePct: o.change_percentage || 0,
+            // Real Greeks from ORATS
+            delta: greeks.delta || null,
+            gamma: greeks.gamma || null,
+            theta: greeks.theta || null,
+            vega: greeks.vega || null,
+        };
+    }
+
+    // ── Yahoo options chain via CORS proxy (fallback) ─────────────
     async function yahooOptionsChain(symbol = 'SPY') {
         // Yahoo's options endpoint returns available expirations and the chain for the nearest one
         const url = `https://query2.finance.yahoo.com/v7/finance/options/${symbol}`;
@@ -478,31 +580,34 @@ const DataEngine = (() => {
         const hit = cached(key, 60_000); // 1 min cache
         if (hit) return hit;
 
-        console.log('[DataEngine] Fetching options chain via Yahoo proxy...');
-
-        // First fetch to get available expirations
-        const chain = await yahooOptionsChain(symbol);
-        if (!chain) {
-            console.log('[DataEngine] Options chain fetch failed');
-            return null;
+        // 1) Try Tradier sandbox (CORS confirmed, has Greeks/IV from ORATS)
+        console.log('[DataEngine] Trying Tradier options chain...');
+        const tradier = await tradierOptionsChain(symbol);
+        if (tradier && tradier.calls.length > 0) {
+            return setCache(key, tradier, 60_000);
         }
 
-        // If we didn't get 0DTE, check if today's expiration exists
-        if (!chain.is0DTE && chain.expiration) {
-            // Try to find today's date among expirations
-            const todayMidnight = new Date();
-            todayMidnight.setHours(0, 0, 0, 0);
-            const todayUnix = Math.floor(todayMidnight.getTime() / 1000);
-            // SPY has daily expirations, so today should exist
-            const todayChain = await yahooOptionsChainForDate(symbol, todayUnix);
-            if (todayChain) {
-                console.log(`[DataEngine] Got 0DTE chain: ${todayChain.calls.length} calls, ${todayChain.puts.length} puts`);
-                return setCache(key, todayChain, 60_000);
+        // 2) Fallback: Yahoo via CORS proxy
+        console.log('[DataEngine] Trying Yahoo options chain via proxy...');
+        const yahoo = await yahooOptionsChain(symbol);
+        if (yahoo) {
+            // If we didn't get 0DTE, try fetching today's specifically
+            if (!yahoo.is0DTE && yahoo.expiration) {
+                const todayMidnight = new Date();
+                todayMidnight.setHours(0, 0, 0, 0);
+                const todayUnix = Math.floor(todayMidnight.getTime() / 1000);
+                const todayChain = await yahooOptionsChainForDate(symbol, todayUnix);
+                if (todayChain) {
+                    todayChain.source = 'yahoo';
+                    return setCache(key, todayChain, 60_000);
+                }
             }
+            yahoo.source = 'yahoo';
+            return setCache(key, yahoo, 60_000);
         }
 
-        console.log(`[DataEngine] Got options chain: ${chain.calls.length} calls, ${chain.puts.length} puts (0DTE: ${chain.is0DTE})`);
-        return setCache(key, chain, 60_000);
+        console.log('[DataEngine] Options chain: all sources failed');
+        return null;
     }
 
     function isUsingSimulatedData() { return _usingSimulated; }

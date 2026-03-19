@@ -224,7 +224,7 @@
             </div>` : '';
 
         details.innerHTML = `
-            ${rec.fromChain ? '<div class="data-badge live">Live Chain</div>' : '<div class="data-badge est">Estimated</div>'}
+            ${rec.fromChain ? `<div class="data-badge live">Live Chain${strategy.chainUsed && optionsChain?.source === 'tradier' ? ' (Tradier)' : strategy.chainUsed && optionsChain?.source === 'yahoo' ? ' (Yahoo)' : ''}</div>` : '<div class="data-badge est">Estimated</div>'}
             <div class="rec-stats">
                 <div class="rec-stat main">
                     <span class="rec-stat-value">${rec.probITM}%</span>
