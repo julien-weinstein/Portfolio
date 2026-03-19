@@ -423,7 +423,7 @@ const PredictionEngine = (() => {
         }
 
         // Predicted price range (using ATR and composite)
-        const currentPrice = ta?.current?.price || quotes.SPY?.price || 565;
+        const currentPrice = ta?.current?.price || quotes.SPY?.price || 656;
         const atr = ta?.atr || currentPrice * 0.005;
         const rangeMultiplier = 1 + absScore * 0.5;
         const expectedMove = atr * rangeMultiplier;

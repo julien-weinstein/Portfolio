@@ -10,10 +10,8 @@
     let chartData = [];
     let ta = null;
     let prediction = null;
-    let tomorrowPrediction = null;
     let news = [];
     let strategy = null;
-    let tomorrowStrategy = null;
     let priceChart = null;
     let signalChart = null;
     let performanceChart = null;
@@ -29,7 +27,6 @@
     // ── Init ───────────────────────────────────────────────────────────
     async function init() {
         updateMarketStatus();
-        setupTabs();
         await refresh();
         setupChartControls();
         setInterval(updateMarketStatus, 30_000);
@@ -48,9 +45,7 @@
 
             ta = TechnicalAnalysis.analyze(chartData);
             prediction = PredictionEngine.predict(ta, quotes, news);
-            tomorrowPrediction = PredictionEngine.predictNextDay(ta, quotes, news);
             strategy = OptionsStrategy.generateStrategy(prediction);
-            tomorrowStrategy = OptionsStrategy.generateNextDayStrategy(tomorrowPrediction);
 
             renderAll();
             document.getElementById('lastUpdate').textContent =
@@ -58,18 +53,6 @@
         } catch (err) {
             console.error('[App] Refresh error:', err);
         }
-    }
-
-    // ── Tabs ────────────────────────────────────────────────────────────
-    function setupTabs() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                btn.classList.add('active');
-                document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-            });
-        });
     }
 
     // ── Market Status ──────────────────────────────────────────────────
@@ -108,26 +91,6 @@
         renderTechnicalIndicators();
         renderNewsFeed();
         renderPerformance();
-        renderTabBadges();
-        renderTomorrowSection();
-    }
-
-    // ── Tab Badges ─────────────────────────────────────────────────────
-    function renderTabBadges() {
-        if (prediction) {
-            const todayBadge = document.getElementById('todaySignalBadge');
-            todayBadge.textContent = prediction.direction;
-            todayBadge.className = 'tab-badge ' +
-                (prediction.direction === 'CALL' ? 'bullish' :
-                 prediction.direction === 'PUT' ? 'bearish' : 'neutral');
-        }
-        if (tomorrowPrediction) {
-            const tmBadge = document.getElementById('tomorrowSignalBadge');
-            tmBadge.textContent = tomorrowPrediction.direction;
-            tmBadge.className = 'tab-badge ' +
-                (tomorrowPrediction.direction === 'BULLISH' ? 'bullish' :
-                 tomorrowPrediction.direction === 'BEARISH' ? 'bearish' : 'neutral');
-        }
     }
 
     // ── Action Banner (Big signal at top) ──────────────────────────────
@@ -143,9 +106,9 @@
             dir === 'CALL' ? 'BUY CALLS' : dir === 'PUT' ? 'BUY PUTS' : 'NEUTRAL';
 
         const bestStrat = strategy.strategies[0];
-        if (bestStrat) {
+        if (bestStrat && bestStrat.type !== 'NEUTRAL') {
             document.getElementById('actionStrike').textContent =
-                `${bestStrat.name} — Strike $${bestStrat.strike} @ $${bestStrat.premium}`;
+                `${bestStrat.name} @ $${bestStrat.premium} — ${bestStrat.probITM}% chance ITM`;
         } else {
             document.getElementById('actionStrike').textContent = 'No high-conviction setup';
         }
@@ -162,7 +125,6 @@
     function renderMetrics() {
         if (!prediction) return;
 
-        // SPY Price
         const spy = quotes.SPY;
         if (spy) {
             document.getElementById('spyPrice').textContent = '$' + spy.price?.toFixed(2);
@@ -171,7 +133,6 @@
             chEl.className = 'metric-sub ' + (spy.change >= 0 ? 'positive' : 'negative');
         }
 
-        // VIX
         const vix = quotes['^VIX'];
         if (vix) {
             document.getElementById('vixValue').textContent = vix.price?.toFixed(2);
@@ -180,13 +141,11 @@
             vchEl.className = 'metric-sub ' + (vix.change <= 0 ? 'positive' : 'negative');
         }
 
-        // Predicted Range
         document.getElementById('predictedRange').textContent =
             `$${prediction.predictedLow} — $${prediction.predictedHigh}`;
         document.getElementById('rangeConfidence').textContent =
             `Expected close: $${prediction.predictedClose}`;
 
-        // Risk Level
         const riskEl = document.getElementById('riskLevelText');
         riskEl.textContent = prediction.riskLevel;
         riskEl.style.color = prediction.riskLevel === 'LOW' ? 'var(--accent-green)' :
@@ -201,42 +160,49 @@
         if (!strategy) return;
 
         const container = document.getElementById('tradeCards');
-        if (!strategy.strategies.length) {
+        const s = strategy.strategies[0];
+
+        if (!s || s.type === 'NEUTRAL') {
             container.innerHTML = `<div class="trade-card" style="padding: 24px; text-align: center; color: var(--text-muted);">
-                No high-conviction 0DTE setups right now. Check back after more data.
+                No high-conviction 0DTE setup right now. Signals are mixed — sit this one out.
             </div>`;
             return;
         }
 
-        container.innerHTML = strategy.strategies.map(s => buildTradeCardHTML(s, true)).join('');
-    }
+        const typeClass = s.type === 'CALL' ? 'call' : 'put';
+        const probColor = s.probProfit > 45 ? 'var(--accent-green)' :
+                          s.probProfit > 30 ? 'var(--accent-yellow)' : 'var(--accent-red)';
 
-    function buildTradeCardHTML(s, is0dte) {
-        const typeClass = s.type === 'CALL' ? 'call' : s.type === 'PUT' ? 'put' :
-                          s.type === 'CONDOR' ? 'condor' : 'spread';
-        const badgeClass = s.type === 'CALL' ? 'buy' : s.type === 'PUT' ? 'sell' :
-                           s.type === 'CONDOR' ? 'neutral-badge' : 'buy';
-        const badgeText = s.type === 'CALL' ? 'BUY' : s.type === 'PUT' ? 'BUY' :
-                          s.type === 'CONDOR' ? 'SELL' : 'BUY';
-
-        return `
+        container.innerHTML = `
             <div class="trade-card ${typeClass}">
                 <div class="trade-card-top">
                     <span class="trade-card-name">${s.name}</span>
-                    <span class="trade-card-badge ${badgeClass}">${badgeText}</span>
+                    <span class="trade-card-badge buy">BUY</span>
                 </div>
                 <div class="trade-card-body">
-                    <div class="trade-card-action">Strike $${s.strike} @ $${s.premium}</div>
+                    <div class="trade-card-action">Strike $${s.strike} @ $${s.premium} per contract</div>
                     <div class="trade-card-rationale">${s.rationale}</div>
-                    ${s.entryTip ? `<div class="trade-card-rationale" style="color: var(--accent-blue); font-weight: 600;">Entry: ${s.entryTip}</div>` : ''}
-                    ${s.expiry ? `<div class="trade-card-rationale" style="color: var(--text-muted);">Expiry: ${s.expiry}</div>` : ''}
+
+                    <div class="prob-row">
+                        <div class="prob-item">
+                            <div class="prob-label">PROB. EXPIRES ITM</div>
+                            <div class="prob-value" style="color: ${probColor}">${s.probITM}%</div>
+                            <div class="prob-bar-track"><div class="prob-bar-fill" style="width: ${s.probITM}%; background: ${probColor}"></div></div>
+                        </div>
+                        <div class="prob-item">
+                            <div class="prob-label">PROB. PROFIT (2x)</div>
+                            <div class="prob-value" style="color: ${probColor}">${s.probProfit}%</div>
+                            <div class="prob-bar-track"><div class="prob-bar-fill" style="width: ${s.probProfit}%; background: ${probColor}"></div></div>
+                        </div>
+                    </div>
+
                     <div class="trade-card-grid">
                         <div><span class="label">Max Risk</span><span class="value red">$${s.maxRisk}</span></div>
-                        <div><span class="label">Target</span><span class="value green">$${s.target}</span></div>
-                        <div><span class="label">Max Reward</span><span class="value">${typeof s.maxReward === 'number' ? '$' + s.maxReward : s.maxReward}</span></div>
-                        <div><span class="label">Breakeven</span><span class="value">${typeof s.breakeven === 'number' ? '$' + s.breakeven : s.breakeven}</span></div>
+                        <div><span class="label">Target (2x)</span><span class="value green">$${s.target}</span></div>
+                        <div><span class="label">Breakeven</span><span class="value">$${s.breakeven}</span></div>
                         <div><span class="label">Stop Loss</span><span class="value red">$${s.stopLoss}</span></div>
                         <div><span class="label">Premium</span><span class="value">$${s.premium}</span></div>
+                        <div><span class="label">IV</span><span class="value">${strategy.iv}%</span></div>
                     </div>
                     <div class="trade-card-greeks">
                         <span>&Delta; ${s.greeks.delta}</span>
@@ -247,112 +213,6 @@
                 </div>
             </div>
         `;
-    }
-
-    // ── Tomorrow Section ───────────────────────────────────────────────
-    function renderTomorrowSection() {
-        if (!tomorrowPrediction || !tomorrowStrategy) return;
-
-        // Banner
-        const banner = document.getElementById('tomorrowBanner');
-        const dir = tomorrowPrediction.direction;
-        banner.className = 'action-banner tomorrow-banner ' +
-            (dir === 'BULLISH' ? 'bullish' : dir === 'BEARISH' ? 'bearish' : 'neutral');
-
-        document.getElementById('tomorrowDirection').textContent = dir;
-        document.getElementById('tomorrowOutlook').textContent =
-            `${tomorrowPrediction.gapDirection} expected | Key level: ${tomorrowPrediction.keyLevelDesc}`;
-        document.getElementById('tomorrowConf').textContent =
-            `${tomorrowPrediction.confidence}% confidence | Gap est: ${tomorrowPrediction.gapEstimate > 0 ? '+' : ''}$${tomorrowPrediction.gapEstimate}`;
-        document.getElementById('tomorrowRange').textContent =
-            `$${tomorrowPrediction.predictedLow} — $${tomorrowPrediction.predictedHigh}`;
-
-        // Tomorrow metrics
-        document.getElementById('overnightBias').textContent = tomorrowPrediction.direction;
-        document.getElementById('overnightBias').style.color =
-            dir === 'BULLISH' ? 'var(--accent-green)' : dir === 'BEARISH' ? 'var(--accent-red)' : 'var(--accent-yellow)';
-        document.getElementById('overnightBiasSub').textContent =
-            `Composite: ${tomorrowPrediction.composite > 0 ? '+' : ''}${tomorrowPrediction.composite.toFixed(3)}`;
-
-        document.getElementById('expectedGap').textContent =
-            `${tomorrowPrediction.gapEstimate > 0 ? '+' : ''}$${tomorrowPrediction.gapEstimate}`;
-        document.getElementById('expectedGap').style.color =
-            tomorrowPrediction.gapEstimate > 0 ? 'var(--accent-green)' : tomorrowPrediction.gapEstimate < -0.1 ? 'var(--accent-red)' : 'var(--text-primary)';
-        document.getElementById('expectedGapSub').textContent = tomorrowPrediction.gapDirection;
-
-        document.getElementById('keyLevel').textContent = '$' + tomorrowPrediction.keyLevel;
-        document.getElementById('keyLevelSub').textContent = tomorrowPrediction.keyLevelDesc;
-
-        // Catalyst summary
-        const topCatalyst = tomorrowPrediction.catalysts[0];
-        if (topCatalyst) {
-            document.getElementById('catalyst').textContent = topCatalyst.icon;
-            document.getElementById('catalyst').style.fontSize = '28px';
-            document.getElementById('catalystSub').textContent = topCatalyst.text.substring(0, 50) + '...';
-        }
-
-        // Tomorrow trade cards
-        const container = document.getElementById('tomorrowTradeCards');
-        if (tomorrowStrategy.strategies.length) {
-            container.innerHTML = tomorrowStrategy.strategies.map(s => buildTradeCardHTML(s, false)).join('');
-        } else {
-            container.innerHTML = `<div class="trade-card" style="padding: 24px; text-align: center; color: var(--text-muted);">
-                No clear overnight setups. Wait for pre-market data.
-            </div>`;
-        }
-
-        // Catalyst list
-        renderCatalysts();
-        renderTomorrowTechnicals();
-        renderSectorMomentum();
-    }
-
-    function renderCatalysts() {
-        const container = document.getElementById('catalystList');
-        if (!tomorrowPrediction?.catalysts) return;
-
-        container.innerHTML = tomorrowPrediction.catalysts.map(c => `
-            <div class="catalyst-item">
-                <span class="catalyst-icon">${c.icon}</span>
-                <span class="catalyst-text">${c.text}</span>
-                <span class="catalyst-impact ${c.impact}">${c.impact.toUpperCase()}</span>
-            </div>
-        `).join('');
-    }
-
-    function renderTomorrowTechnicals() {
-        const container = document.getElementById('tomorrowTechnicals');
-        if (!tomorrowPrediction?.multiDayTechnicals) return;
-
-        container.innerHTML = tomorrowPrediction.multiDayTechnicals.map(ind => `
-            <div class="indicator-item">
-                <div class="indicator-name">${ind.name}</div>
-                <div class="indicator-value">${ind.value || '—'}</div>
-                <div class="indicator-signal ${ind.cls}">${ind.signal}</div>
-            </div>
-        `).join('');
-    }
-
-    function renderSectorMomentum() {
-        const container = document.getElementById('sectorMomentum');
-        if (!tomorrowPrediction?.sectorMomentum) return;
-
-        const maxPct = Math.max(...tomorrowPrediction.sectorMomentum.map(s => Math.abs(s.changePct)), 1);
-
-        container.innerHTML = tomorrowPrediction.sectorMomentum.map(s => {
-            const pct = s.changePct;
-            const barWidth = Math.min(100, (Math.abs(pct) / maxPct) * 100);
-            const cls = pct >= 0 ? 'positive' : 'negative';
-            return `
-                <div class="sector-bar-item">
-                    <span class="sector-name">${s.name}</span>
-                    <div class="sector-bar-track">
-                        <div class="sector-bar-fill ${cls}" style="width: ${barWidth}%"></div>
-                    </div>
-                    <span class="sector-pct ${cls}">${pct > 0 ? '+' : ''}${pct.toFixed(2)}%</span>
-                </div>
-            `;
-        }).join('');
     }
 
     // ── Price Chart ────────────────────────────────────────────────────
