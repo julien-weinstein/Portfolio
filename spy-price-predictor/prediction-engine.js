@@ -300,7 +300,7 @@ const PredictionEngine = (() => {
             confidence = Math.round(Math.min(85, absScore * 100 + 20));
         }
 
-        const currentPrice = ta?.current?.price || quotes.SPY?.price || 659;
+        const currentPrice = quotes.SPY?.price || ta?.current?.price || 0;
         const atr = ta?.atr || currentPrice * 0.005;
         const rangeMultiplier = 1 + absScore * 0.5;
         const expectedMove = atr * rangeMultiplier;
