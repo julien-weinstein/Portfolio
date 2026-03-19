@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SPY 0DTE Options Predictor — Quant Dashboard</title>
+    <title>SPY Options Predictor — 0DTE & Next Day</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
@@ -13,8 +13,8 @@
 <body>
     <header>
         <div class="header-left">
-            <h1>SPY 0DTE Predictor</h1>
-            <span class="subtitle">Multi-Factor Quantitative Analysis Engine</span>
+            <h1>SPY Options Predictor</h1>
+            <span class="subtitle">0DTE + Next Day Quant Analysis</span>
         </div>
         <div class="header-right">
             <div class="market-status" id="marketStatus">
@@ -26,102 +26,191 @@
     </header>
 
     <main>
-        <!-- Top Row: Key Metrics -->
-        <section class="metrics-row">
-            <div class="metric-card signal-card" id="signalCard">
-                <div class="metric-label">0DTE SIGNAL</div>
-                <div class="metric-value" id="signalDirection">—</div>
-                <div class="metric-sub" id="signalConfidence"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">SPY PRICE</div>
-                <div class="metric-value" id="spyPrice">—</div>
-                <div class="metric-sub" id="spyChange"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">VIX</div>
-                <div class="metric-value" id="vixValue">—</div>
-                <div class="metric-sub" id="vixChange"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">PREDICTED RANGE</div>
-                <div class="metric-value" id="predictedRange">—</div>
-                <div class="metric-sub" id="rangeConfidence"></div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">OPTIMAL STRIKE</div>
-                <div class="metric-value" id="optimalStrike">—</div>
-                <div class="metric-sub" id="strikeType"></div>
-            </div>
-        </section>
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="today">
+                <span class="tab-icon">&#9889;</span>
+                <span class="tab-label">Today's 0DTE Plays</span>
+                <span class="tab-badge" id="todaySignalBadge">—</span>
+            </button>
+            <button class="tab-btn" data-tab="tomorrow">
+                <span class="tab-icon">&#9728;</span>
+                <span class="tab-label">Tomorrow's Setups</span>
+                <span class="tab-badge" id="tomorrowSignalBadge">—</span>
+            </button>
+        </nav>
 
-        <!-- Charts Row -->
-        <section class="charts-row">
-            <div class="chart-container wide">
-                <div class="chart-header">
-                    <h3>SPY Price Action & Prediction</h3>
-                    <div class="chart-controls">
-                        <button class="btn active" data-range="1D">1D</button>
-                        <button class="btn" data-range="5D">5D</button>
-                        <button class="btn" data-range="1M">1M</button>
-                        <button class="btn" data-range="3M">3M</button>
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!--  TODAY'S 0DTE SECTION                                         -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <div class="tab-content active" id="tab-today">
+
+            <!-- Action Banner — Clear buy/sell signal -->
+            <section class="action-banner" id="actionBanner">
+                <div class="action-direction" id="actionDirection">—</div>
+                <div class="action-details">
+                    <div class="action-strike" id="actionStrike">Analyzing...</div>
+                    <div class="action-conf" id="actionConf"></div>
+                    <div class="action-timing" id="actionTiming"></div>
+                </div>
+                <div class="action-price-target">
+                    <div class="action-label">PRICE TARGET</div>
+                    <div class="action-target-value" id="actionTarget">—</div>
+                </div>
+            </section>
+
+            <!-- Top Row: Key Metrics -->
+            <section class="metrics-row">
+                <div class="metric-card">
+                    <div class="metric-label">SPY PRICE</div>
+                    <div class="metric-value" id="spyPrice">—</div>
+                    <div class="metric-sub" id="spyChange"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">VIX</div>
+                    <div class="metric-value" id="vixValue">—</div>
+                    <div class="metric-sub" id="vixChange"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">PREDICTED RANGE</div>
+                    <div class="metric-value" id="predictedRange">—</div>
+                    <div class="metric-sub" id="rangeConfidence"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">RISK LEVEL</div>
+                    <div class="metric-value" id="riskLevelText">—</div>
+                    <div class="metric-sub" id="riskSubText"></div>
+                </div>
+            </section>
+
+            <!-- 0DTE Trade Cards — The main actionable area -->
+            <section class="trade-section">
+                <h2 class="section-title">0DTE Trade Ideas <span class="section-subtitle">— Expires Today</span></h2>
+                <div class="trade-cards" id="tradeCards">
+                    <!-- Populated by JS -->
+                </div>
+            </section>
+
+            <!-- Charts Row -->
+            <section class="charts-row">
+                <div class="chart-container wide">
+                    <div class="chart-header">
+                        <h3>SPY Price Action & Prediction Zones</h3>
+                        <div class="chart-controls">
+                            <button class="btn active" data-range="1D">1D</button>
+                            <button class="btn" data-range="5D">5D</button>
+                            <button class="btn" data-range="1M">1M</button>
+                            <button class="btn" data-range="3M">3M</button>
+                        </div>
                     </div>
+                    <canvas id="priceChart"></canvas>
                 </div>
-                <canvas id="priceChart"></canvas>
-            </div>
-            <div class="chart-container narrow">
-                <div class="chart-header">
-                    <h3>Signal Strength Breakdown</h3>
+                <div class="chart-container narrow">
+                    <div class="chart-header">
+                        <h3>Signal Strength</h3>
+                    </div>
+                    <canvas id="signalChart"></canvas>
                 </div>
-                <canvas id="signalChart"></canvas>
-            </div>
-        </section>
+            </section>
 
-        <!-- Factor Analysis Row -->
-        <section class="factors-row">
-            <div class="panel">
-                <h3>Multi-Factor Scoring</h3>
-                <div class="factor-list" id="factorList">
-                    <!-- Populated by JS -->
+            <!-- Factor Analysis Row -->
+            <section class="factors-row">
+                <div class="panel">
+                    <h3>Multi-Factor Scoring</h3>
+                    <div class="factor-list" id="factorList"></div>
                 </div>
-            </div>
-            <div class="panel">
-                <h3>Technical Indicators</h3>
-                <div class="indicator-grid" id="technicalIndicators">
-                    <!-- Populated by JS -->
+                <div class="panel">
+                    <h3>Technical Indicators</h3>
+                    <div class="indicator-grid" id="technicalIndicators"></div>
                 </div>
-            </div>
-            <div class="panel">
-                <h3>Macro & Sentiment</h3>
-                <div class="news-feed" id="newsFeed">
-                    <!-- Populated by JS -->
+                <div class="panel">
+                    <h3>Macro & Sentiment</h3>
+                    <div class="news-feed" id="newsFeed"></div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- Options Strategy Row -->
-        <section class="strategy-row">
-            <div class="panel wide">
-                <h3>0DTE Options Strategy Recommendation</h3>
-                <div class="strategy-content" id="strategyContent">
+            <!-- Historical Performance -->
+            <section class="performance-row">
+                <div class="panel full">
+                    <h3>Model Backtest Performance (Simulated)</h3>
+                    <canvas id="performanceChart"></canvas>
+                    <div class="performance-stats" id="performanceStats"></div>
+                </div>
+            </section>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!--  TOMORROW'S SETUPS SECTION                                    -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <div class="tab-content" id="tab-tomorrow">
+
+            <!-- Tomorrow's Outlook Banner -->
+            <section class="action-banner tomorrow-banner" id="tomorrowBanner">
+                <div class="action-direction" id="tomorrowDirection">—</div>
+                <div class="action-details">
+                    <div class="action-strike" id="tomorrowOutlook">Calculating overnight setup...</div>
+                    <div class="action-conf" id="tomorrowConf"></div>
+                </div>
+                <div class="action-price-target">
+                    <div class="action-label">EXPECTED RANGE</div>
+                    <div class="action-target-value" id="tomorrowRange">—</div>
+                </div>
+            </section>
+
+            <!-- Tomorrow's Key Factors -->
+            <section class="metrics-row">
+                <div class="metric-card">
+                    <div class="metric-label">OVERNIGHT BIAS</div>
+                    <div class="metric-value" id="overnightBias">—</div>
+                    <div class="metric-sub" id="overnightBiasSub"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">EXPECTED GAP</div>
+                    <div class="metric-value" id="expectedGap">—</div>
+                    <div class="metric-sub" id="expectedGapSub"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">KEY LEVEL</div>
+                    <div class="metric-value" id="keyLevel">—</div>
+                    <div class="metric-sub" id="keyLevelSub"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">CATALYST</div>
+                    <div class="metric-value" id="catalyst">—</div>
+                    <div class="metric-sub" id="catalystSub"></div>
+                </div>
+            </section>
+
+            <!-- Tomorrow's Trade Setups -->
+            <section class="trade-section">
+                <h2 class="section-title">Next-Day Option Setups <span class="section-subtitle">— For Tomorrow's Session</span></h2>
+                <div class="tomorrow-explainer">
+                    These setups use end-of-day momentum, overnight catalyst analysis, and
+                    multi-day technical patterns to identify high-probability entries for
+                    tomorrow's open. Buy at open or wait for a VWAP pullback in the first 30 min.
+                </div>
+                <div class="trade-cards" id="tomorrowTradeCards">
                     <!-- Populated by JS -->
                 </div>
-            </div>
-            <div class="panel narrow">
-                <h3>Risk Dashboard</h3>
-                <canvas id="riskGauge"></canvas>
-                <div class="risk-details" id="riskDetails"></div>
-            </div>
-        </section>
+            </section>
 
-        <!-- Historical Performance -->
-        <section class="performance-row">
-            <div class="panel full">
-                <h3>Model Backtest Performance (Simulated)</h3>
-                <canvas id="performanceChart"></canvas>
-                <div class="performance-stats" id="performanceStats"></div>
-            </div>
-        </section>
+            <!-- Tomorrow's Analysis -->
+            <section class="factors-row tomorrow-factors">
+                <div class="panel">
+                    <h3>Overnight Catalysts</h3>
+                    <div class="catalyst-list" id="catalystList"></div>
+                </div>
+                <div class="panel">
+                    <h3>Multi-Day Technicals</h3>
+                    <div class="indicator-grid" id="tomorrowTechnicals"></div>
+                </div>
+                <div class="panel">
+                    <h3>Sector Momentum (Into Tomorrow)</h3>
+                    <div class="sector-momentum" id="sectorMomentum"></div>
+                </div>
+            </section>
+        </div>
+
     </main>
 
     <footer>

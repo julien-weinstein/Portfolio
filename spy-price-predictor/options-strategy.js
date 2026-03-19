@@ -285,5 +285,225 @@ const OptionsStrategy = (() => {
         };
     }
 
-    return { generateStrategy, generateBacktestData, blackScholes, estimateGreeks };
+    // ── Next-Day Strategy Generation ───────────────────────────────────
+    function generateNextDayStrategy(prediction) {
+        const { direction, confidence, currentPrice, atr, riskLevel,
+                predictedHigh, predictedLow, predictedClose } = prediction;
+
+        // Tomorrow's options have ~7 hours (full trading day)
+        const T = 7 / (252 * 6.5);
+        const vix = prediction.factors?.volatility?.details?.find(d => d.name === 'VIX Level');
+        const ivBase = vix ? parseFloat(vix.value) / 100 : 0.18;
+        const iv = ivBase * 1.1; // slight premium for holding overnight
+        const r = 0.053;
+        const roundStrike = (s) => Math.round(s);
+
+        const strategies = [];
+
+        if (direction === 'BULLISH' && confidence > 20) {
+            // ATM call for next day
+            const strike = roundStrike(currentPrice);
+            const premium = blackScholes(currentPrice, strike, T, r, iv, 'call');
+            const greeks = estimateGreeks(currentPrice, strike, T, r, iv, 'call');
+
+            strategies.push({
+                name: 'Next-Day Call (ATM)',
+                type: 'CALL',
+                strike,
+                premium: +premium.toFixed(2),
+                greeks,
+                target: +(premium * 2).toFixed(2),
+                stopLoss: +(premium * 0.4).toFixed(2),
+                maxRisk: +premium.toFixed(2),
+                maxReward: 'Unlimited',
+                breakeven: +(strike + premium).toFixed(2),
+                rationale: `Buy ${strike}C at tomorrow's open. Overnight bias is bullish — target $${predictedHigh} by mid-day. Sell at open if gap-up captures > 80% of target.`,
+                priority: confidence > 45 ? 1 : 2,
+                entryTip: 'Buy at open or wait for first 15-min VWAP pullback',
+                expiry: '1DTE or weekly',
+            });
+
+            // OTM call for aggressive play
+            if (confidence > 35) {
+                const otmStrike = roundStrike(currentPrice + atr * 0.4);
+                const otmPrem = blackScholes(currentPrice, otmStrike, T, r, iv, 'call');
+                const otmGreeks = estimateGreeks(currentPrice, otmStrike, T, r, iv, 'call');
+                strategies.push({
+                    name: 'Next-Day Call (OTM)',
+                    type: 'CALL',
+                    strike: otmStrike,
+                    premium: +otmPrem.toFixed(2),
+                    greeks: otmGreeks,
+                    target: +(otmPrem * 2.5).toFixed(2),
+                    stopLoss: +(otmPrem * 0.4).toFixed(2),
+                    maxRisk: +otmPrem.toFixed(2),
+                    maxReward: 'Unlimited',
+                    breakeven: +(otmStrike + otmPrem).toFixed(2),
+                    rationale: `Aggressive: Buy ${otmStrike}C. Needs a move to $${predictedHigh}+ to hit target. Lower cost, higher reward/risk.`,
+                    priority: 2,
+                    entryTip: 'Only if pre-market futures are green',
+                    expiry: '1DTE',
+                });
+            }
+
+            // Call debit spread for defined risk
+            if (confidence > 30) {
+                const longStrike = roundStrike(currentPrice);
+                const shortStrike = roundStrike(currentPrice + atr * 0.7);
+                const longPrem = blackScholes(currentPrice, longStrike, T, r, iv, 'call');
+                const shortPrem = blackScholes(currentPrice, shortStrike, T, r, iv, 'call');
+                const netDebit = longPrem - shortPrem;
+                const maxProfit = shortStrike - longStrike - netDebit;
+
+                strategies.push({
+                    name: 'Call Debit Spread',
+                    type: 'SPREAD',
+                    strike: `${longStrike}/${shortStrike}`,
+                    premium: +netDebit.toFixed(2),
+                    greeks: estimateGreeks(currentPrice, longStrike, T, r, iv, 'call'),
+                    target: +maxProfit.toFixed(2),
+                    stopLoss: +(netDebit * 0.4).toFixed(2),
+                    maxRisk: +netDebit.toFixed(2),
+                    maxReward: +maxProfit.toFixed(2),
+                    breakeven: +(longStrike + netDebit).toFixed(2),
+                    rationale: `Defined risk play: Buy ${longStrike}C / Sell ${shortStrike}C. Cap risk at $${netDebit.toFixed(2)} with max profit $${maxProfit.toFixed(2)}.`,
+                    priority: 1,
+                    entryTip: 'Good for uncertain overnight — defined risk',
+                    expiry: 'Weekly',
+                });
+            }
+        }
+
+        if (direction === 'BEARISH' && confidence > 20) {
+            const strike = roundStrike(currentPrice);
+            const premium = blackScholes(currentPrice, strike, T, r, iv, 'put');
+            const greeks = estimateGreeks(currentPrice, strike, T, r, iv, 'put');
+
+            strategies.push({
+                name: 'Next-Day Put (ATM)',
+                type: 'PUT',
+                strike,
+                premium: +premium.toFixed(2),
+                greeks,
+                target: +(premium * 2).toFixed(2),
+                stopLoss: +(premium * 0.4).toFixed(2),
+                maxRisk: +premium.toFixed(2),
+                maxReward: +(strike - premium).toFixed(2),
+                breakeven: +(strike - premium).toFixed(2),
+                rationale: `Buy ${strike}P at tomorrow's open. Overnight bias is bearish — target $${predictedLow} by mid-day. Sell into gap-down if it exceeds target.`,
+                priority: confidence > 45 ? 1 : 2,
+                entryTip: 'Buy at open or on any morning bounce to VWAP',
+                expiry: '1DTE or weekly',
+            });
+
+            // OTM put for aggressive play
+            if (confidence > 35) {
+                const otmStrike = roundStrike(currentPrice - atr * 0.4);
+                const otmPrem = blackScholes(currentPrice, otmStrike, T, r, iv, 'put');
+                const otmGreeks = estimateGreeks(currentPrice, otmStrike, T, r, iv, 'put');
+                strategies.push({
+                    name: 'Next-Day Put (OTM)',
+                    type: 'PUT',
+                    strike: otmStrike,
+                    premium: +otmPrem.toFixed(2),
+                    greeks: otmGreeks,
+                    target: +(otmPrem * 2.5).toFixed(2),
+                    stopLoss: +(otmPrem * 0.4).toFixed(2),
+                    maxRisk: +otmPrem.toFixed(2),
+                    maxReward: +(otmStrike - otmPrem).toFixed(2),
+                    breakeven: +(otmStrike - otmPrem).toFixed(2),
+                    rationale: `Aggressive: Buy ${otmStrike}P. Needs drop to $${predictedLow} or lower. Cheap premium, high potential.`,
+                    priority: 2,
+                    entryTip: 'Only if pre-market futures are red',
+                    expiry: '1DTE',
+                });
+            }
+
+            // Put debit spread
+            if (confidence > 30) {
+                const longStrike = roundStrike(currentPrice);
+                const shortStrike = roundStrike(currentPrice - atr * 0.7);
+                const longPrem = blackScholes(currentPrice, longStrike, T, r, iv, 'put');
+                const shortPrem = blackScholes(currentPrice, shortStrike, T, r, iv, 'put');
+                const netDebit = longPrem - shortPrem;
+                const maxProfit = longStrike - shortStrike - netDebit;
+
+                strategies.push({
+                    name: 'Put Debit Spread',
+                    type: 'SPREAD',
+                    strike: `${longStrike}/${shortStrike}`,
+                    premium: +netDebit.toFixed(2),
+                    greeks: estimateGreeks(currentPrice, longStrike, T, r, iv, 'put'),
+                    target: +maxProfit.toFixed(2),
+                    stopLoss: +(netDebit * 0.4).toFixed(2),
+                    maxRisk: +netDebit.toFixed(2),
+                    maxReward: +maxProfit.toFixed(2),
+                    breakeven: +(longStrike - netDebit).toFixed(2),
+                    rationale: `Defined risk: Buy ${longStrike}P / Sell ${shortStrike}P. Cap risk at $${netDebit.toFixed(2)}.`,
+                    priority: 1,
+                    entryTip: 'Good for bearish bias with limited risk',
+                    expiry: 'Weekly',
+                });
+            }
+        }
+
+        if (direction === 'NEUTRAL' || confidence < 20) {
+            // Straddle for expected move
+            const strike = roundStrike(currentPrice);
+            const callPrem = blackScholes(currentPrice, strike, T, r, iv, 'call');
+            const putPrem = blackScholes(currentPrice, strike, T, r, iv, 'put');
+            const totalPrem = callPrem + putPrem;
+
+            strategies.push({
+                name: 'Straddle (Volatility Play)',
+                type: 'SPREAD',
+                strike,
+                premium: +totalPrem.toFixed(2),
+                greeks: { delta: 0, gamma: 0.01, theta: -0.05, vega: 0.1 },
+                target: +(totalPrem * 1.5).toFixed(2),
+                stopLoss: +(totalPrem * 0.5).toFixed(2),
+                maxRisk: +totalPrem.toFixed(2),
+                maxReward: 'Unlimited',
+                breakeven: `$${(strike - totalPrem).toFixed(2)} / $${(strike + totalPrem).toFixed(2)}`,
+                rationale: `Neutral bias but expecting a move. Buy ${strike} straddle. Profit if SPY moves > $${totalPrem.toFixed(2)} in either direction.`,
+                priority: 1,
+                entryTip: 'Buy before close today — profits from overnight move',
+                expiry: '1DTE',
+            });
+
+            // Iron condor if low expected vol
+            const callShort = roundStrike(currentPrice + atr * 0.6);
+            const callLong = callShort + 2;
+            const putShort = roundStrike(currentPrice - atr * 0.6);
+            const putLong = putShort - 2;
+            const callCredit = blackScholes(currentPrice, callShort, T, r, iv, 'call') -
+                              blackScholes(currentPrice, callLong, T, r, iv, 'call');
+            const putCredit = blackScholes(currentPrice, putShort, T, r, iv, 'put') -
+                             blackScholes(currentPrice, putLong, T, r, iv, 'put');
+            const totalCredit = callCredit + putCredit;
+
+            strategies.push({
+                name: 'Iron Condor (Range-Bound)',
+                type: 'CONDOR',
+                strike: `${putLong}/${putShort}/${callShort}/${callLong}`,
+                premium: +totalCredit.toFixed(2),
+                greeks: { delta: 0, gamma: 0, theta: +(totalCredit * 0.15).toFixed(3), vega: 0 },
+                target: +totalCredit.toFixed(2),
+                stopLoss: +(totalCredit * 2).toFixed(2),
+                maxRisk: +(2 - totalCredit).toFixed(2),
+                maxReward: +totalCredit.toFixed(2),
+                breakeven: `$${(putShort - totalCredit).toFixed(2)} / $${(callShort + totalCredit).toFixed(2)}`,
+                rationale: `Sell ${putShort}P/${callShort}C, buy ${putLong}P/${callLong}C wings. Collect $${totalCredit.toFixed(2)} if SPY stays in range.`,
+                priority: 2,
+                entryTip: 'Enter before close — theta works overnight',
+                expiry: '1DTE',
+            });
+        }
+
+        return {
+            strategies: strategies.sort((a, b) => a.priority - b.priority),
+        };
+    }
+
+    return { generateStrategy, generateNextDayStrategy, generateBacktestData, blackScholes, estimateGreeks };
 })();
