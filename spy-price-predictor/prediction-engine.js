@@ -173,18 +173,51 @@ const PredictionEngine = (() => {
         return { score, details };
     }
 
-    function scoreSentiment(news) {
+    function scoreSentiment(news, optionsChain) {
         const details = [];
         if (!news?.length) return { score: 0, details };
 
-        const avgSentiment = news.reduce((sum, n) => sum + n.sentiment, 0) / news.length;
-        details.push({ name: 'Headlines', value: avgSentiment > 0.1 ? 'Positive' : avgSentiment < -0.1 ? 'Negative' : 'Mixed', score: avgSentiment });
+        const isReal = news.some(n => n.isReal);
 
-        const pcRatio = 0.8 + Math.random() * 0.6;
-        const pcScore = pcRatio > 1.2 ? 0.4 : pcRatio < 0.7 ? -0.3 : (1.0 - pcRatio) * 0.5;
-        details.push({ name: 'Put/Call', value: pcRatio.toFixed(2), score: pcScore });
+        // Weight recent articles more heavily
+        const now = Date.now();
+        let weightedSum = 0, weightTotal = 0;
+        news.forEach(n => {
+            const ageHrs = Math.max(0.1, (now - n.time) / 3600_000);
+            const weight = 1 / Math.sqrt(ageHrs); // recency bias
+            weightedSum += n.sentiment * weight;
+            weightTotal += weight;
+        });
+        const avgSentiment = weightTotal > 0 ? weightedSum / weightTotal : 0;
+        const label = avgSentiment > 0.1 ? 'Positive' : avgSentiment < -0.1 ? 'Negative' : 'Mixed';
+        details.push({
+            name: isReal ? 'Live News' : 'Headlines',
+            value: `${label} (${news.length} articles)`,
+            score: avgSentiment,
+        });
 
-        return { score: Math.max(-1, Math.min(1, avgSentiment * 0.6 + pcScore * 0.4)), details };
+        // Put/Call ratio from real chain data if available
+        let pcScore = 0;
+        if (optionsChain?.isReal) {
+            const totalPutVol = (optionsChain.puts || []).reduce((s, o) => s + (o.volume || 0), 0);
+            const totalCallVol = (optionsChain.calls || []).reduce((s, o) => s + (o.volume || 0), 0);
+            const pcRatio = totalCallVol > 0 ? totalPutVol / totalCallVol : 1.0;
+            // High put/call = bearish sentiment, low = bullish
+            pcScore = pcRatio > 1.3 ? -0.5 : pcRatio > 1.0 ? -0.2 : pcRatio < 0.6 ? 0.5 : pcRatio < 0.8 ? 0.2 : 0;
+            details.push({ name: 'Put/Call Vol', value: pcRatio.toFixed(2), score: pcScore });
+
+            // Open interest skew
+            const totalPutOI = (optionsChain.puts || []).reduce((s, o) => s + (o.openInterest || 0), 0);
+            const totalCallOI = (optionsChain.calls || []).reduce((s, o) => s + (o.openInterest || 0), 0);
+            const oiRatio = totalCallOI > 0 ? totalPutOI / totalCallOI : 1.0;
+            const oiScore = oiRatio > 1.3 ? -0.3 : oiRatio < 0.7 ? 0.3 : 0;
+            details.push({ name: 'OI Skew', value: oiRatio.toFixed(2), score: oiScore });
+
+            return { score: Math.max(-1, Math.min(1, avgSentiment * 0.4 + pcScore * 0.35 + oiScore * 0.25)), details };
+        }
+
+        // No chain — sentiment only (lower weight since it's less reliable alone)
+        return { score: Math.max(-1, Math.min(1, avgSentiment * 0.8)), details };
     }
 
     function scoreMicrostructure(ta, quotes) {
@@ -271,14 +304,14 @@ const PredictionEngine = (() => {
         intraday: 0.25,
     };
 
-    function predict(ta, quotes, news) {
+    function predict(ta, quotes, news, optionsChain) {
         const factors = {
             technical: scoreTechnicalMomentum(ta),
             volatility: scoreVolatilityRegime(quotes, ta),
             crossAsset: scoreCrossAsset(quotes),
             sector: scoreSectorRotation(quotes),
             megaCap: scoreMegaCap(quotes),
-            sentiment: scoreSentiment(news),
+            sentiment: scoreSentiment(news, optionsChain),
             microstructure: scoreMicrostructure(ta, quotes),
             intraday: scoreIntradayMomentum(ta, quotes),
         };

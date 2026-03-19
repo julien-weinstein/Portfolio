@@ -1,7 +1,8 @@
 /**
  * Options Strategy — 0DTE Single Strike Recommendation
  *
- * Recommends ONE option: call or put, strike price, probability, premium.
+ * When real options chain data is available, picks the best strike from actual
+ * bid/ask/volume/OI. Falls back to Black-Scholes estimation when chain is unavailable.
  */
 
 const OptionsStrategy = (() => {
@@ -41,9 +42,101 @@ const OptionsStrategy = (() => {
         return type === 'call' ? normalCDF(d2) : normalCDF(-d2);
     }
 
-    function generateStrategy(prediction) {
-        const { direction, confidence, currentPrice, atr,
-                predictedHigh, predictedLow } = prediction;
+    // ── Pick best strike from real options chain ───────────────────
+    function pickFromChain(chain, direction, currentPrice, atr, T, r) {
+        const type = direction === 'CALL' ? 'call' : 'put';
+        const options = type === 'call' ? chain.calls : chain.puts;
+        if (!options || options.length === 0) return null;
+
+        // Filter to slightly OTM strikes with real liquidity
+        const targetOffset = atr * 0.15;
+        const targetStrike = direction === 'CALL'
+            ? currentPrice + targetOffset
+            : currentPrice - targetOffset;
+
+        // Score each option by: proximity to target, liquidity, spread tightness
+        const scored = options
+            .filter(o => {
+                // Must have some bid (not worthless) and reasonable spread
+                if (o.bid <= 0 && o.last <= 0) return false;
+                // For calls: strike >= current (OTM or ATM)
+                // For puts: strike <= current (OTM or ATM)
+                if (type === 'call' && o.strike < currentPrice - 1) return false;
+                if (type === 'put' && o.strike > currentPrice + 1) return false;
+                // Not too far OTM (within ~2x ATR)
+                const dist = Math.abs(o.strike - currentPrice);
+                if (dist > atr * 2) return false;
+                return true;
+            })
+            .map(o => {
+                const distFromTarget = Math.abs(o.strike - targetStrike);
+                const spread = o.ask > 0 && o.bid > 0 ? (o.ask - o.bid) / o.mid : 1;
+                const liquidity = Math.log10(Math.max(1, o.volume)) + Math.log10(Math.max(1, o.openInterest));
+                // Lower is better for distance and spread, higher is better for liquidity
+                const score = -distFromTarget * 2 - spread * 50 + liquidity * 5;
+                return { ...o, score };
+            })
+            .sort((a, b) => b.score - a.score);
+
+        if (scored.length === 0) return null;
+
+        const best = scored[0];
+        const premium = best.mid > 0 ? best.mid : best.last;
+        const iv = best.impliedVol > 0 ? best.impliedVol : 0.2;
+        const pItm = probITM(currentPrice, best.strike, T, r, iv, type);
+        const breakeven = type === 'call' ? best.strike + premium : best.strike - premium;
+        const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
+        const g = greeks(currentPrice, best.strike, T, r, iv, type);
+
+        return {
+            direction,
+            strike: best.strike,
+            type: direction,
+            premium: +premium.toFixed(2),
+            bid: best.bid,
+            ask: best.ask,
+            breakeven: +breakeven.toFixed(2),
+            probITM: Math.round(pItm * 100),
+            probProfit: Math.round(pProfit * 100),
+            greeks: g,
+            volume: best.volume,
+            openInterest: best.openInterest,
+            impliedVol: +(iv * 100).toFixed(1),
+            stopLoss: +(premium * 0.4).toFixed(2),
+            target: +(premium * 2).toFixed(2),
+            fromChain: true,
+        };
+    }
+
+    // ── Estimate when no chain is available ────────────────────────
+    function estimateFromModel(direction, currentPrice, atr, T, r, iv) {
+        const type = direction === 'CALL' ? 'call' : 'put';
+        const offset = direction === 'CALL' ? atr * 0.15 : -atr * 0.15;
+        const strike = Math.round(currentPrice + offset);
+
+        const premium = Math.max(0.01, blackScholes(currentPrice, strike, T, r, iv, type));
+        const g = greeks(currentPrice, strike, T, r, iv, type);
+        const pItm = probITM(currentPrice, strike, T, r, iv, type);
+        const breakeven = type === 'call' ? strike + premium : strike - premium;
+        const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
+
+        return {
+            direction,
+            strike,
+            type: direction,
+            premium: +premium.toFixed(2),
+            breakeven: +breakeven.toFixed(2),
+            probITM: Math.round(pItm * 100),
+            probProfit: Math.round(pProfit * 100),
+            greeks: g,
+            stopLoss: +(premium * 0.4).toFixed(2),
+            target: +(premium * 2).toFixed(2),
+            fromChain: false,
+        };
+    }
+
+    function generateStrategy(prediction, optionsChain) {
+        const { direction, confidence, currentPrice, atr } = prediction;
 
         const now = new Date();
         const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -53,38 +146,24 @@ const OptionsStrategy = (() => {
 
         const vixDetail = prediction.factors?.volatility?.details?.find(d => d.name === 'VIX');
         const ivBase = vixDetail ? parseFloat(vixDetail.value) / 100 : 0.18;
-        // 0DTE IV premium increases as expiry nears
         const ivMult = hoursToClose > 5 ? 1.2 : hoursToClose > 3 ? 1.35 : hoursToClose > 1 ? 1.5 : 1.8;
         const iv = ivBase * ivMult;
         const r = 0.053;
 
         let recommendation = null;
+        let chainUsed = false;
 
-        // No recommendations in the last 15 min — 0DTE that close to expiry is pure gambling
+        // No recommendations in the last 15 min
         if (direction !== 'NEUTRAL' && confidence > 20 && hoursToClose > 0.25) {
-            const type = direction === 'CALL' ? 'call' : 'put';
-            // Pick strike: slightly OTM for better risk/reward
-            const offset = direction === 'CALL' ? atr * 0.15 : -atr * 0.15;
-            const strike = Math.round(currentPrice + offset);
-
-            const premium = Math.max(0.01, blackScholes(currentPrice, strike, T, r, iv, type));
-            const g = greeks(currentPrice, strike, T, r, iv, type);
-            const pItm = probITM(currentPrice, strike, T, r, iv, type);
-            const breakeven = type === 'call' ? strike + premium : strike - premium;
-            const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
-
-            recommendation = {
-                direction,
-                strike,
-                type: direction,
-                premium: +premium.toFixed(2),
-                breakeven: +breakeven.toFixed(2),
-                probITM: Math.round(pItm * 100),
-                probProfit: Math.round(pProfit * 100),
-                greeks: g,
-                stopLoss: +(premium * 0.4).toFixed(2),
-                target: +(premium * 2).toFixed(2),
-            };
+            // Try real options chain first
+            if (optionsChain?.isReal && optionsChain.calls?.length > 0) {
+                recommendation = pickFromChain(optionsChain, direction, currentPrice, atr, T, r);
+                if (recommendation) chainUsed = true;
+            }
+            // Fallback to model estimation
+            if (!recommendation) {
+                recommendation = estimateFromModel(direction, currentPrice, atr, T, r, iv);
+            }
         }
 
         let timing;
@@ -96,11 +175,18 @@ const OptionsStrategy = (() => {
         else if (hoursToClose > 0.25) timing = 'Final 15 min — close all positions';
         else timing = 'Market closing — no new entries';
 
+        // Compute aggregate IV from chain if available
+        let displayIV = +(iv * 100).toFixed(1);
+        if (recommendation?.impliedVol) {
+            displayIV = recommendation.impliedVol;
+        }
+
         return {
             recommendation,
             timing,
             hoursToClose: +hoursToClose.toFixed(1),
-            iv: +(iv * 100).toFixed(1),
+            iv: displayIV,
+            chainUsed,
         };
     }
 

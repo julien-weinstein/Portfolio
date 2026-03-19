@@ -185,7 +185,30 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
 .rec-card.bullish .rec-type { color: var(--green); }
 .rec-card.bearish .rec-type { color: var(--red); }
 
-.rec-details { margin-top: 20px; }
+.rec-details { margin-top: 20px; position: relative; }
+
+.data-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-bottom: 12px;
+}
+
+.data-badge.live {
+    background: rgba(0, 255, 136, 0.12);
+    color: var(--green);
+    border: 1px solid rgba(0, 255, 136, 0.2);
+}
+
+.data-badge.est {
+    background: rgba(255, 204, 0, 0.1);
+    color: var(--yellow);
+    border: 1px solid rgba(255, 204, 0, 0.15);
+}
 
 .rec-stats {
     display: flex;

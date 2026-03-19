@@ -1,8 +1,9 @@
 /**
- * Data Engine — Live market data via Finnhub (free, CORS-enabled).
+ * Data Engine — Live market data via Finnhub + Yahoo CORS proxies.
  *
- * Priority: Finnhub → Twelve Data → Yahoo (via CORS proxy) → Simulated fallback.
- * Simulated fallback shows a warning banner so the user knows data isn't live.
+ * Quotes: Finnhub → Yahoo proxy → Simulated fallback.
+ * News:   Finnhub market news → simulated fallback (with keyword sentiment scoring).
+ * Options: Yahoo options chain via CORS proxy → estimated fallback.
  */
 
 const DataEngine = (() => {
@@ -210,6 +211,86 @@ const DataEngine = (() => {
         };
     }
 
+    // ── Keyword-based sentiment scorer ──────────────────────────────
+    const BULLISH_WORDS = [
+        'surge','surges','surging','rally','rallies','rallying','soar','soars',
+        'jump','jumps','gain','gains','rise','rises','rising','climb','climbs',
+        'beat','beats','record','high','bullish','upgrade','upgrades','outperform',
+        'strong','optimism','optimistic','boom','booming','recovery','rebound',
+        'breakout','upbeat','positive','acceleration','accelerate',
+    ];
+    const BEARISH_WORDS = [
+        'crash','crashes','plunge','plunges','plummeting','tumble','tumbles',
+        'drop','drops','fall','falls','falling','decline','declines','sink','sinks',
+        'miss','misses','low','bearish','downgrade','downgrades','underperform',
+        'weak','weakness','fear','fears','recession','slowdown','selloff','sell-off',
+        'slump','slumps','panic','warning','warns','risk','losses','loss','cut','cuts',
+    ];
+
+    function scoreSentiment(text) {
+        const words = text.toLowerCase().split(/\W+/);
+        let score = 0;
+        for (const w of words) {
+            if (BULLISH_WORDS.includes(w)) score += 0.3;
+            if (BEARISH_WORDS.includes(w)) score -= 0.3;
+        }
+        return Math.max(-1, Math.min(1, score));
+    }
+
+    // ── Finnhub news (real headlines, CORS-enabled) ────────────────
+    async function finnhubNews() {
+        try {
+            const resp = await fetch(
+                `https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`,
+                { signal: AbortSignal.timeout(6000) }
+            );
+            if (!resp.ok) return null;
+            const articles = await resp.json();
+            if (!Array.isArray(articles) || articles.length === 0) return null;
+            // Take last 20 articles, score sentiment from headline + summary
+            return articles.slice(0, 20).map(a => ({
+                title: a.headline || a.summary || '',
+                source: a.source || '',
+                url: a.url || '',
+                time: (a.datetime || 0) * 1000,
+                category: a.category || 'general',
+                sentiment: scoreSentiment((a.headline || '') + ' ' + (a.summary || '')),
+                related: a.related || '',
+                isReal: true,
+            }));
+        } catch {
+            return null;
+        }
+    }
+
+    // Finnhub company-specific news for SPY-related tickers
+    async function finnhubCompanyNews(symbol) {
+        try {
+            const now = new Date();
+            const from = new Date(now - 86400_000).toISOString().slice(0, 10);
+            const to = now.toISOString().slice(0, 10);
+            const resp = await fetch(
+                `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${from}&to=${to}&token=${FINNHUB_KEY}`,
+                { signal: AbortSignal.timeout(6000) }
+            );
+            if (!resp.ok) return [];
+            const articles = await resp.json();
+            if (!Array.isArray(articles)) return [];
+            return articles.slice(0, 10).map(a => ({
+                title: a.headline || '',
+                source: a.source || '',
+                url: a.url || '',
+                time: (a.datetime || 0) * 1000,
+                category: 'company',
+                sentiment: scoreSentiment((a.headline || '') + ' ' + (a.summary || '')),
+                related: symbol,
+                isReal: true,
+            }));
+        } catch {
+            return [];
+        }
+    }
+
     function generateSimulatedNews() {
         const headlines = [
             { title: 'Fed signals patience on rate cuts', sentiment: -0.3, category: 'macro' },
@@ -221,8 +302,79 @@ const DataEngine = (() => {
             { title: 'Put/call ratio elevated', sentiment: -0.35, category: 'sentiment' },
         ];
         return headlines.sort(() => Math.random() - 0.5).slice(0, 5).map((h, i) => ({
-            ...h, time: Date.now() - i * 15 * 60_000,
+            ...h, time: Date.now() - i * 15 * 60_000, isReal: false,
         }));
+    }
+
+    // ── Yahoo options chain via CORS proxy ─────────────────────────
+    async function yahooOptionsChain(symbol = 'SPY') {
+        // Yahoo's options endpoint returns available expirations and the chain for the nearest one
+        const url = `https://query2.finance.yahoo.com/v7/finance/options/${symbol}`;
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const resp = await fetch(proxy + encodeURIComponent(url), { signal: AbortSignal.timeout(8000) });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const result = json.optionChain?.result?.[0];
+                if (!result) continue;
+
+                const expirations = result.expirationDates || [];
+                const calls = (result.options?.[0]?.calls || []).map(parseYahooOption);
+                const puts = (result.options?.[0]?.puts || []).map(parseYahooOption);
+                const underlying = result.quote?.regularMarketPrice || 0;
+
+                if (calls.length === 0 && puts.length === 0) continue;
+
+                // Find today's expiration (0DTE) if available
+                const todayUnix = Math.floor(new Date().setHours(16, 0, 0, 0) / 1000);
+                const has0DTE = expirations.some(e => Math.abs(e - todayUnix) < 86400);
+
+                // If the nearest expiration isn't today, try fetching today's specifically
+                if (!has0DTE && expirations.length > 0) {
+                    // Return what we have — it's the nearest expiration
+                    return { calls, puts, underlying, expiration: expirations[0], is0DTE: false, isReal: true };
+                }
+
+                return { calls, puts, underlying, expiration: expirations[0], is0DTE: has0DTE, isReal: true };
+            } catch { continue; }
+        }
+        return null;
+    }
+
+    // Fetch a specific expiration date's chain
+    async function yahooOptionsChainForDate(symbol, expirationUnix) {
+        const url = `https://query2.finance.yahoo.com/v7/finance/options/${symbol}?date=${expirationUnix}`;
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const resp = await fetch(proxy + encodeURIComponent(url), { signal: AbortSignal.timeout(8000) });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const result = json.optionChain?.result?.[0];
+                if (!result?.options?.[0]) continue;
+                const calls = (result.options[0].calls || []).map(parseYahooOption);
+                const puts = (result.options[0].puts || []).map(parseYahooOption);
+                const underlying = result.quote?.regularMarketPrice || 0;
+                if (calls.length === 0 && puts.length === 0) continue;
+                return { calls, puts, underlying, expiration: expirationUnix, is0DTE: true, isReal: true };
+            } catch { continue; }
+        }
+        return null;
+    }
+
+    function parseYahooOption(o) {
+        return {
+            strike: o.strike,
+            bid: o.bid || 0,
+            ask: o.ask || 0,
+            mid: +((o.bid + o.ask) / 2).toFixed(2) || o.lastPrice || 0,
+            last: o.lastPrice || 0,
+            volume: o.volume || 0,
+            openInterest: o.openInterest || 0,
+            impliedVol: o.impliedVolatility || 0,
+            inTheMoney: o.inTheMoney || false,
+            change: o.change || 0,
+            changePct: o.percentChange || 0,
+        };
     }
 
     // ── Public API ───────────────────────────────────────────────────
@@ -290,7 +442,68 @@ const DataEngine = (() => {
         return setCache(key, generateSimulatedChart(basePrice, days, intMap[interval] || 5), 120_000);
     }
 
-    function fetchNews() { return generateSimulatedNews(); }
+    async function fetchNews() {
+        const key = 'news';
+        const hit = cached(key, 300_000); // 5 min cache for news
+        if (hit) return hit;
+
+        // Try Finnhub market news + SPY-specific news
+        console.log('[DataEngine] Fetching Finnhub news...');
+        const [market, spy] = await Promise.all([
+            finnhubNews(),
+            finnhubCompanyNews('SPY'),
+        ]);
+
+        if (market && market.length > 0) {
+            // Merge and deduplicate by title
+            const all = [...(spy || []), ...market];
+            const seen = new Set();
+            const deduped = all.filter(a => {
+                const k = a.title.slice(0, 50);
+                if (seen.has(k)) return false;
+                seen.add(k);
+                return true;
+            }).slice(0, 20);
+            console.log(`[DataEngine] Got ${deduped.length} real news articles`);
+            return setCache(key, deduped, 300_000);
+        }
+
+        // Fallback to simulated
+        console.log('[DataEngine] News API failed — using simulated headlines');
+        return setCache(key, generateSimulatedNews(), 300_000);
+    }
+
+    async function fetchOptionsChain(symbol = 'SPY') {
+        const key = `options_${symbol}`;
+        const hit = cached(key, 60_000); // 1 min cache
+        if (hit) return hit;
+
+        console.log('[DataEngine] Fetching options chain via Yahoo proxy...');
+
+        // First fetch to get available expirations
+        const chain = await yahooOptionsChain(symbol);
+        if (!chain) {
+            console.log('[DataEngine] Options chain fetch failed');
+            return null;
+        }
+
+        // If we didn't get 0DTE, check if today's expiration exists
+        if (!chain.is0DTE && chain.expiration) {
+            // Try to find today's date among expirations
+            const todayMidnight = new Date();
+            todayMidnight.setHours(0, 0, 0, 0);
+            const todayUnix = Math.floor(todayMidnight.getTime() / 1000);
+            // SPY has daily expirations, so today should exist
+            const todayChain = await yahooOptionsChainForDate(symbol, todayUnix);
+            if (todayChain) {
+                console.log(`[DataEngine] Got 0DTE chain: ${todayChain.calls.length} calls, ${todayChain.puts.length} puts`);
+                return setCache(key, todayChain, 60_000);
+            }
+        }
+
+        console.log(`[DataEngine] Got options chain: ${chain.calls.length} calls, ${chain.puts.length} puts (0DTE: ${chain.is0DTE})`);
+        return setCache(key, chain, 60_000);
+    }
 
     function isUsingSimulatedData() { return _usingSimulated; }
 
@@ -389,5 +602,5 @@ const DataEngine = (() => {
         return { status: 'closed', label: 'Closed', opensIn, session: 'closed' };
     }
 
-    return { fetchAllQuotes, fetchPriceChart, fetchNews, getMarketStatus, isUsingSimulatedData, SYMBOLS };
+    return { fetchAllQuotes, fetchPriceChart, fetchNews, fetchOptionsChain, getMarketStatus, isUsingSimulatedData, SYMBOLS };
 })();
