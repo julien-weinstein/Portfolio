@@ -1,4 +1,4 @@
-/* SPY 0DTE Predictor — Minimal Dark Theme */
+/* SPY 0DTE Predictor — Dark Theme */
 
 :root {
     --bg: #0a0e17;
@@ -12,6 +12,7 @@
     --green: #00ff88;
     --red: #ff4444;
     --yellow: #ffcc00;
+    --purple: #8866ff;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -42,12 +43,14 @@ header h1 { font-size: 16px; color: var(--blue); letter-spacing: 1px; }
 
 .market-status {
     display: flex; align-items: center; gap: 6px;
-    font-size: 12px; padding: 3px 10px;
+    font-size: 11px; padding: 3px 10px;
     border-radius: 20px; background: rgba(255,255,255,0.05);
+    white-space: nowrap;
 }
-.market-status .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; }
+.market-status .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; flex-shrink: 0; }
 .market-status.open .status-dot { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
-.market-status.premarket .status-dot { background: var(--yellow); }
+.market-status.premarket .status-dot { background: var(--yellow); animation: pulse 3s infinite; }
+.market-status.afterhours .status-dot { background: var(--purple); }
 .market-status.closed .status-dot { background: #555; }
 
 .last-update { font-size: 11px; color: var(--muted); }
@@ -76,7 +79,8 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
 }
 
 .price-label { font-size: 12px; color: var(--muted); letter-spacing: 1px; }
-.price-value { font-size: 22px; font-weight: 700; }
+.price-value { font-size: 22px; font-weight: 700; transition: color 0.3s; }
+.price-value.flash { animation: priceFlash 0.6s ease-out; }
 .price-change { font-size: 13px; }
 .price-change.up { color: var(--green); }
 .price-change.down { color: var(--red); }
@@ -93,7 +97,7 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
     border-radius: 14px;
     margin-bottom: 10px;
     text-align: center;
-    transition: border-color 0.3s;
+    transition: border-color 0.3s, background 0.3s;
 }
 
 .rec-card.bullish {
@@ -108,6 +112,42 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
 
 .rec-card.neutral {
     border-color: var(--yellow);
+}
+
+/* Session-info card (pre-market, after-hours, closed) */
+.rec-card.session-info {
+    border-color: var(--border);
+    background: linear-gradient(180deg, rgba(136,153,170,0.04) 0%, var(--card) 60%);
+}
+
+.rec-card.session-info .rec-signal {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--dim);
+    letter-spacing: 2px;
+    gap: 8px;
+}
+
+.session-icon {
+    font-size: 20px;
+    opacity: 0.7;
+}
+
+.session-countdown {
+    font-size: 16px;
+    color: var(--blue);
+    margin-top: 10px;
+}
+
+.session-countdown b {
+    font-size: 18px;
+    color: var(--text);
+}
+
+.session-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
 }
 
 .rec-signal {
@@ -196,6 +236,8 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
     margin-top: 8px;
 }
 
+.rec-reason b { color: var(--text); }
+
 /* Timing Bar */
 .timing-bar {
     text-align: center;
@@ -212,6 +254,10 @@ main { max-width: 700px; margin: 0 auto; padding: 16px; }
     color: var(--red);
     background: rgba(255,68,68,0.05);
     border-color: rgba(255,68,68,0.1);
+}
+
+.timing-bar.hidden {
+    display: none;
 }
 
 /* Chart */
@@ -323,10 +369,16 @@ footer strong { color: var(--yellow); }
     .rec-strike { font-size: 36px; }
     .rec-stats { gap: 14px; }
     .rec-risk { flex-direction: column; gap: 6px; align-items: center; }
+    .market-status { font-size: 10px; padding: 3px 8px; }
 }
 
 /* Animations */
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
+}
+
+@keyframes priceFlash {
+    0% { color: var(--blue); text-shadow: 0 0 8px var(--blue); }
+    100% { color: var(--text); text-shadow: none; }
 }
