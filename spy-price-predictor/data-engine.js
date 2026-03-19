@@ -154,6 +154,45 @@ const DataEngine = (() => {
         }
     }
 
+    // ── Tradier chart (timesales — CORS, reliable intraday) ──────────
+    async function tradierChart(symbol, rangeDays) {
+        try {
+            // Tradier timesales gives 1min/5min/15min intraday bars
+            const interval = rangeDays <= 1 ? '5min' : rangeDays <= 5 ? '15min' : '60min';
+            // Build start/end dates
+            const now = new Date();
+            const start = new Date(now.getTime() - rangeDays * 86400_000);
+            const startStr = start.toISOString().slice(0, 10);
+            const endStr = now.toISOString().slice(0, 10);
+
+            const url = `https://sandbox.tradier.com/v1/markets/timesales?symbol=${symbol}&interval=${interval}&start=${startStr}&end=${endStr}`;
+            const resp = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(8000),
+            });
+            if (!resp.ok) return null;
+            const json = await resp.json();
+            const series = json.series?.data;
+            if (!Array.isArray(series) || series.length < 10) return null;
+
+            const data = series.map(d => ({
+                time: new Date(d.time || d.timestamp).getTime(),
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close,
+                volume: d.volume,
+            })).filter(d => d.close != null && !isNaN(d.time));
+
+            if (data.length < 10) return null;
+            console.log(`[DataEngine] Tradier chart: ${data.length} bars, last close $${data[data.length - 1].close}`);
+            return data;
+        } catch (e) {
+            console.log('[DataEngine] Tradier chart error:', e.message);
+            return null;
+        }
+    }
+
     // ── Simulated fallback (last resort) ─────────────────────────────
     function showSimulatedWarning() {
         if (document.getElementById('simWarning')) return;
@@ -530,16 +569,20 @@ const DataEngine = (() => {
         const dayMap = { '1d': 1, '5d': 5, '1mo': 22, '3mo': 66 };
         const days = dayMap[range] || 1;
 
-        // Try Finnhub candles
+        // 1) Try Tradier timesales (CORS, reliable)
+        const tr = await tradierChart(symbol, days);
+        if (tr && tr.length > 10) return setCache(key, tr, 120_000);
+
+        // 2) Try Finnhub candles
         const fh = await finnhubChart(symbol, days);
         if (fh && fh.length > 10) return setCache(key, fh, 120_000);
 
-        // Try Yahoo chart
+        // 3) Try Yahoo chart
         const yh = await yahooChart(symbol, range, interval);
         if (yh && yh.length > 10) return setCache(key, yh, 120_000);
 
-        // Fallback: use last known SPY price or 659
-        const basePrice = cache.allQuotes?.data?.SPY?.price || 659;
+        // Fallback: use last known SPY price
+        const basePrice = cache.allQuotes?.data?.SPY?.price || 660;
         const intMap = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 390 };
         return setCache(key, generateSimulatedChart(basePrice, days, intMap[interval] || 5), 120_000);
     }

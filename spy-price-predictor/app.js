@@ -114,7 +114,7 @@
         priceEl.textContent = newPrice;
 
         // Flash on price change
-        if (prevPrice !== '—' && prevPrice !== newPrice) {
+        if (prevPrice !== '--' && prevPrice !== newPrice) {
             priceEl.classList.add('flash');
             setTimeout(() => priceEl.classList.remove('flash'), 600);
         }
@@ -282,18 +282,48 @@
         if (priceChart) priceChart.destroy();
 
         const session = marketStatus?.session;
-        const lineColor = session === 'regular' ? '#00d4ff'
-            : session === 'premarket' ? '#ffcc00'
-            : session === 'afterhours' ? '#8866ff'
-            : '#556677';
+
+        // Determine if price is up or down from open
+        const firstClose = closes[0] || 0;
+        const lastClose = closes[closes.length - 1] || 0;
+        const isUp = lastClose >= firstClose;
+        const lineColor = session === 'premarket' ? '#eab308'
+            : session === 'afterhours' ? '#a78bfa'
+            : session === 'closed' ? '#6b7a8d'
+            : isUp ? '#22c55e' : '#ef4444';
+
+        // Build gradient fill
+        const gradient = ctx.createLinearGradient(0, 0, 0, ctx.canvas.clientHeight || 280);
+        gradient.addColorStop(0, hexToRgba(lineColor, 0.15));
+        gradient.addColorStop(0.6, hexToRgba(lineColor, 0.02));
+        gradient.addColorStop(1, 'transparent');
 
         priceChart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'SPY', data: closes, borderColor: lineColor, backgroundColor: hexToRgba(lineColor, 0.04), borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1 },
-                    ...(session === 'regular' ? [{ label: 'VWAP', data: vwap, borderColor: 'rgba(255,165,0,0.6)', borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false }] : []),
+                    {
+                        label: 'SPY',
+                        data: closes,
+                        borderColor: lineColor,
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        pointHoverBackgroundColor: lineColor,
+                        fill: true,
+                        tension: 0.2,
+                    },
+                    ...(session === 'regular' ? [{
+                        label: 'VWAP',
+                        data: vwap,
+                        borderColor: 'rgba(167, 139, 250, 0.5)',
+                        borderWidth: 1.5,
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        fill: false,
+                    }] : []),
                 ],
             },
             options: {
@@ -301,11 +331,54 @@
                 maintainAspectRatio: false,
                 interaction: { intersect: false, mode: 'index' },
                 plugins: {
-                    legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 11 }, usePointStyle: true, pointStyle: 'line' } },
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            color: '#6b7a8d',
+                            font: { family: 'Inter, sans-serif', size: 11, weight: 500 },
+                            usePointStyle: true,
+                            pointStyle: 'line',
+                            padding: 16,
+                        },
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(23, 28, 40, 0.95)',
+                        titleColor: '#a1aab8',
+                        bodyColor: '#f0f2f5',
+                        borderColor: 'rgba(255,255,255,0.08)',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        padding: 10,
+                        titleFont: { family: 'Inter, sans-serif', size: 11, weight: 500 },
+                        bodyFont: { family: 'Inter, sans-serif', size: 13, weight: 600 },
+                        displayColors: false,
+                        callbacks: {
+                            label: (ctx) => '$' + ctx.parsed.y?.toFixed(2),
+                        },
+                    },
                 },
                 scales: {
-                    x: { type: 'time', time: { tooltipFormat: 'HH:mm' }, ticks: { color: '#444', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.03)' } },
-                    y: { ticks: { color: '#444' }, grid: { color: 'rgba(255,255,255,0.03)' } },
+                    x: {
+                        type: 'time',
+                        time: { tooltipFormat: 'h:mm a' },
+                        ticks: {
+                            color: '#444f5e',
+                            maxTicksLimit: 7,
+                            font: { family: 'Inter, sans-serif', size: 11 },
+                        },
+                        grid: { display: false },
+                        border: { display: false },
+                    },
+                    y: {
+                        ticks: {
+                            color: '#444f5e',
+                            font: { family: 'Inter, sans-serif', size: 11 },
+                            callback: (v) => '$' + v.toFixed(0),
+                        },
+                        grid: { color: 'rgba(255,255,255,0.03)', drawBorder: false },
+                        border: { display: false },
+                    },
                 },
             },
         });
