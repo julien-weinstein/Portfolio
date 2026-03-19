@@ -27,8 +27,28 @@ const DataEngine = (() => {
         return data;
     }
 
-    // ── Yahoo Finance v8 quote API (CORS‑proxy wrapped) ───────────────
-    const CORS_PROXY = 'https://corsproxy.io/?';
+    // ── Yahoo Finance quote API (multiple CORS proxies for reliability) ─
+    const CORS_PROXIES = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?',
+        'https://api.codetabs.com/v1/proxy?quest=',
+    ];
+
+    async function tryFetchWithProxies(targetUrl) {
+        for (const proxy of CORS_PROXIES) {
+            try {
+                const url = proxy + encodeURIComponent(targetUrl);
+                const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+                if (resp.ok) {
+                    const json = await resp.json();
+                    return json;
+                }
+            } catch {
+                continue; // try next proxy
+            }
+        }
+        return null;
+    }
 
     async function yahooQuote(symbols) {
         const key = `yq_${symbols.join(',')}`;
@@ -36,11 +56,9 @@ const DataEngine = (() => {
         if (hit) return hit;
 
         try {
-            const url = `${CORS_PROXY}${encodeURIComponent(
-                `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`
-            )}`;
-            const resp = await fetch(url);
-            const json = await resp.json();
+            const targetUrl = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`;
+            const json = await tryFetchWithProxies(targetUrl);
+            if (!json) return null;
             const results = {};
             (json.quoteResponse?.result || []).forEach(q => {
                 results[q.symbol] = {
@@ -70,11 +88,9 @@ const DataEngine = (() => {
         if (hit) return hit;
 
         try {
-            const url = `${CORS_PROXY}${encodeURIComponent(
-                `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`
-            )}`;
-            const resp = await fetch(url);
-            const json = await resp.json();
+            const targetUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`;
+            const json = await tryFetchWithProxies(targetUrl);
+            if (!json) return null;
             const result = json.chart?.result?.[0];
             if (!result) return null;
             const ts = result.timestamp || [];
@@ -96,11 +112,10 @@ const DataEngine = (() => {
     // ── Generate realistic simulated data when APIs fail ───────────────
     function generateSimulatedQuotes() {
         const now = Date.now();
-        const baseSpyPrice = 565 + Math.random() * 20 - 10; // ~555-575 range
-        const spyChange = (Math.random() - 0.48) * 4; // slight bullish bias
+        const baseSpyPrice = 656 + Math.random() * 10 - 5; // ~651-661 range (Mar 2026)
         const vixBase = 14 + Math.random() * 8;
 
-        function makeQuote(base, volatility, name) {
+        function makeQuote(base, volatility) {
             const change = (Math.random() - 0.48) * volatility;
             return {
                 price: +(base + change).toFixed(2),
@@ -118,27 +133,27 @@ const DataEngine = (() => {
         }
 
         return {
-            SPY: makeQuote(baseSpyPrice, 4, 'SPY'),
+            SPY: makeQuote(baseSpyPrice, 5),
             '^VIX': { price: +vixBase.toFixed(2), change: +(Math.random() * 2 - 1).toFixed(2), changePct: +((Math.random() * 2 - 1) / vixBase * 100).toFixed(2) },
-            QQQ: makeQuote(485 + Math.random() * 15, 5, 'QQQ'),
-            IWM: makeQuote(220 + Math.random() * 8, 3, 'IWM'),
-            XLF: makeQuote(42 + Math.random() * 2, 1, 'XLF'),
-            XLE: makeQuote(88 + Math.random() * 4, 2, 'XLE'),
-            XLK: makeQuote(210 + Math.random() * 8, 4, 'XLK'),
-            XLV: makeQuote(145 + Math.random() * 4, 2, 'XLV'),
-            XLI: makeQuote(120 + Math.random() * 4, 2, 'XLI'),
-            XLU: makeQuote(72 + Math.random() * 3, 1.5, 'XLU'),
-            USO: makeQuote(75 + Math.random() * 4, 2, 'USO'),
-            TLT: makeQuote(92 + Math.random() * 3, 1.5, 'TLT'),
-            GLD: makeQuote(215 + Math.random() * 6, 2, 'GLD'),
-            DXY: makeQuote(104 + Math.random() * 2, 0.8, 'DXY'),
-            AAPL: makeQuote(192 + Math.random() * 8, 4, 'AAPL'),
-            MSFT: makeQuote(420 + Math.random() * 15, 6, 'MSFT'),
-            NVDA: makeQuote(880 + Math.random() * 40, 20, 'NVDA'),
-            AMZN: makeQuote(185 + Math.random() * 8, 4, 'AMZN'),
-            GOOGL: makeQuote(155 + Math.random() * 6, 3, 'GOOGL'),
-            META: makeQuote(500 + Math.random() * 15, 8, 'META'),
-            TSLA: makeQuote(175 + Math.random() * 15, 8, 'TSLA'),
+            QQQ: makeQuote(560 + Math.random() * 10, 6),
+            IWM: makeQuote(240 + Math.random() * 8, 3),
+            XLF: makeQuote(52 + Math.random() * 2, 1.2),
+            XLE: makeQuote(92 + Math.random() * 4, 2),
+            XLK: makeQuote(250 + Math.random() * 8, 5),
+            XLV: makeQuote(160 + Math.random() * 4, 2),
+            XLI: makeQuote(138 + Math.random() * 4, 2),
+            XLU: makeQuote(80 + Math.random() * 3, 1.5),
+            USO: makeQuote(72 + Math.random() * 4, 2),
+            TLT: makeQuote(88 + Math.random() * 3, 1.5),
+            GLD: makeQuote(290 + Math.random() * 8, 3),
+            DXY: makeQuote(103 + Math.random() * 2, 0.8),
+            AAPL: makeQuote(245 + Math.random() * 8, 5),
+            MSFT: makeQuote(455 + Math.random() * 12, 7),
+            NVDA: makeQuote(145 + Math.random() * 10, 8),
+            AMZN: makeQuote(235 + Math.random() * 8, 5),
+            GOOGL: makeQuote(195 + Math.random() * 6, 4),
+            META: makeQuote(680 + Math.random() * 15, 10),
+            TSLA: makeQuote(280 + Math.random() * 15, 10),
         };
     }
 
@@ -228,7 +243,7 @@ const DataEngine = (() => {
         const dayMap = { '1d': 1, '5d': 5, '1mo': 22, '3mo': 66 };
         const intMap = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 390 };
         return generateSimulatedChart(
-            565, dayMap[range] || 5, intMap[interval] || 5
+            656, dayMap[range] || 5, intMap[interval] || 5
         );
     }
 
