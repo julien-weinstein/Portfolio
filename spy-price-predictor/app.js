@@ -10,11 +10,12 @@
     let chartData = [];
     let ta = null;
     let prediction = null;
+    let tomorrowPrediction = null;
     let news = [];
     let strategy = null;
+    let tomorrowStrategy = null;
     let priceChart = null;
     let signalChart = null;
-    let riskGaugeChart = null;
     let performanceChart = null;
     let selectedRange = '5D';
 
@@ -28,10 +29,11 @@
     // ── Init ───────────────────────────────────────────────────────────
     async function init() {
         updateMarketStatus();
+        setupTabs();
         await refresh();
         setupChartControls();
         setInterval(updateMarketStatus, 30_000);
-        setInterval(refresh, 60_000); // refresh every minute
+        setInterval(refresh, 60_000);
     }
 
     async function refresh() {
@@ -46,7 +48,9 @@
 
             ta = TechnicalAnalysis.analyze(chartData);
             prediction = PredictionEngine.predict(ta, quotes, news);
+            tomorrowPrediction = PredictionEngine.predictNextDay(ta, quotes, news);
             strategy = OptionsStrategy.generateStrategy(prediction);
+            tomorrowStrategy = OptionsStrategy.generateNextDayStrategy(tomorrowPrediction);
 
             renderAll();
             document.getElementById('lastUpdate').textContent =
@@ -54,6 +58,18 @@
         } catch (err) {
             console.error('[App] Refresh error:', err);
         }
+    }
+
+    // ── Tabs ────────────────────────────────────────────────────────────
+    function setupTabs() {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            });
+        });
     }
 
     // ── Market Status ──────────────────────────────────────────────────
@@ -83,30 +99,68 @@
 
     // ── Render Everything ──────────────────────────────────────────────
     function renderAll() {
+        renderActionBanner();
         renderMetrics();
+        renderTradeCards();
         renderPriceChart();
         renderSignalChart();
         renderFactors();
         renderTechnicalIndicators();
         renderNewsFeed();
-        renderStrategy();
-        renderRiskGauge();
         renderPerformance();
+        renderTabBadges();
+        renderTomorrowSection();
+    }
+
+    // ── Tab Badges ─────────────────────────────────────────────────────
+    function renderTabBadges() {
+        if (prediction) {
+            const todayBadge = document.getElementById('todaySignalBadge');
+            todayBadge.textContent = prediction.direction;
+            todayBadge.className = 'tab-badge ' +
+                (prediction.direction === 'CALL' ? 'bullish' :
+                 prediction.direction === 'PUT' ? 'bearish' : 'neutral');
+        }
+        if (tomorrowPrediction) {
+            const tmBadge = document.getElementById('tomorrowSignalBadge');
+            tmBadge.textContent = tomorrowPrediction.direction;
+            tmBadge.className = 'tab-badge ' +
+                (tomorrowPrediction.direction === 'BULLISH' ? 'bullish' :
+                 tomorrowPrediction.direction === 'BEARISH' ? 'bearish' : 'neutral');
+        }
+    }
+
+    // ── Action Banner (Big signal at top) ──────────────────────────────
+    function renderActionBanner() {
+        if (!prediction || !strategy) return;
+
+        const banner = document.getElementById('actionBanner');
+        const dir = prediction.direction;
+        banner.className = 'action-banner ' +
+            (dir === 'CALL' ? 'bullish' : dir === 'PUT' ? 'bearish' : 'neutral');
+
+        document.getElementById('actionDirection').textContent =
+            dir === 'CALL' ? 'BUY CALLS' : dir === 'PUT' ? 'BUY PUTS' : 'NEUTRAL';
+
+        const bestStrat = strategy.strategies[0];
+        if (bestStrat) {
+            document.getElementById('actionStrike').textContent =
+                `${bestStrat.name} — Strike $${bestStrat.strike} @ $${bestStrat.premium}`;
+        } else {
+            document.getElementById('actionStrike').textContent = 'No high-conviction setup';
+        }
+
+        document.getElementById('actionConf').textContent =
+            `${prediction.confidence}% confidence | ${prediction.riskLevel} risk`;
+        document.getElementById('actionTiming').textContent =
+            strategy.timingAdvice;
+        document.getElementById('actionTarget').textContent =
+            `$${prediction.predictedClose}`;
     }
 
     // ── Metrics Cards ──────────────────────────────────────────────────
     function renderMetrics() {
         if (!prediction) return;
-
-        // Signal
-        const signalCard = document.getElementById('signalCard');
-        const signalDir = document.getElementById('signalDirection');
-        const signalConf = document.getElementById('signalConfidence');
-        signalDir.textContent = prediction.direction;
-        signalConf.textContent = `${prediction.confidence}% confidence`;
-        signalCard.className = 'metric-card signal-card ' +
-            (prediction.direction === 'CALL' ? 'bullish' :
-             prediction.direction === 'PUT' ? 'bearish' : 'neutral');
 
         // SPY Price
         const spy = quotes.SPY;
@@ -132,12 +186,173 @@
         document.getElementById('rangeConfidence').textContent =
             `Expected close: $${prediction.predictedClose}`;
 
-        // Optimal Strike
-        if (strategy?.strategies?.length) {
-            const best = strategy.strategies[0];
-            document.getElementById('optimalStrike').textContent = '$' + best.strike;
-            document.getElementById('strikeType').textContent = best.name;
+        // Risk Level
+        const riskEl = document.getElementById('riskLevelText');
+        riskEl.textContent = prediction.riskLevel;
+        riskEl.style.color = prediction.riskLevel === 'LOW' ? 'var(--accent-green)' :
+            prediction.riskLevel === 'MODERATE' ? 'var(--accent-yellow)' :
+            prediction.riskLevel === 'HIGH' ? 'var(--accent-orange)' : 'var(--accent-red)';
+        document.getElementById('riskSubText').textContent =
+            `VIX: ${vix?.price?.toFixed(1) || '—'} | ATR: $${prediction.atr?.toFixed(2) || '—'}`;
+    }
+
+    // ── Trade Cards (0DTE) ─────────────────────────────────────────────
+    function renderTradeCards() {
+        if (!strategy) return;
+
+        const container = document.getElementById('tradeCards');
+        if (!strategy.strategies.length) {
+            container.innerHTML = `<div class="trade-card" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                No high-conviction 0DTE setups right now. Check back after more data.
+            </div>`;
+            return;
         }
+
+        container.innerHTML = strategy.strategies.map(s => buildTradeCardHTML(s, true)).join('');
+    }
+
+    function buildTradeCardHTML(s, is0dte) {
+        const typeClass = s.type === 'CALL' ? 'call' : s.type === 'PUT' ? 'put' :
+                          s.type === 'CONDOR' ? 'condor' : 'spread';
+        const badgeClass = s.type === 'CALL' ? 'buy' : s.type === 'PUT' ? 'sell' :
+                           s.type === 'CONDOR' ? 'neutral-badge' : 'buy';
+        const badgeText = s.type === 'CALL' ? 'BUY' : s.type === 'PUT' ? 'BUY' :
+                          s.type === 'CONDOR' ? 'SELL' : 'BUY';
+
+        return `
+            <div class="trade-card ${typeClass}">
+                <div class="trade-card-top">
+                    <span class="trade-card-name">${s.name}</span>
+                    <span class="trade-card-badge ${badgeClass}">${badgeText}</span>
+                </div>
+                <div class="trade-card-body">
+                    <div class="trade-card-action">Strike $${s.strike} @ $${s.premium}</div>
+                    <div class="trade-card-rationale">${s.rationale}</div>
+                    ${s.entryTip ? `<div class="trade-card-rationale" style="color: var(--accent-blue); font-weight: 600;">Entry: ${s.entryTip}</div>` : ''}
+                    ${s.expiry ? `<div class="trade-card-rationale" style="color: var(--text-muted);">Expiry: ${s.expiry}</div>` : ''}
+                    <div class="trade-card-grid">
+                        <div><span class="label">Max Risk</span><span class="value red">$${s.maxRisk}</span></div>
+                        <div><span class="label">Target</span><span class="value green">$${s.target}</span></div>
+                        <div><span class="label">Max Reward</span><span class="value">${typeof s.maxReward === 'number' ? '$' + s.maxReward : s.maxReward}</span></div>
+                        <div><span class="label">Breakeven</span><span class="value">${typeof s.breakeven === 'number' ? '$' + s.breakeven : s.breakeven}</span></div>
+                        <div><span class="label">Stop Loss</span><span class="value red">$${s.stopLoss}</span></div>
+                        <div><span class="label">Premium</span><span class="value">$${s.premium}</span></div>
+                    </div>
+                    <div class="trade-card-greeks">
+                        <span>&Delta; ${s.greeks.delta}</span>
+                        <span>&Gamma; ${s.greeks.gamma}</span>
+                        <span>&Theta; ${s.greeks.theta}</span>
+                        <span>V ${s.greeks.vega}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // ── Tomorrow Section ───────────────────────────────────────────────
+    function renderTomorrowSection() {
+        if (!tomorrowPrediction || !tomorrowStrategy) return;
+
+        // Banner
+        const banner = document.getElementById('tomorrowBanner');
+        const dir = tomorrowPrediction.direction;
+        banner.className = 'action-banner tomorrow-banner ' +
+            (dir === 'BULLISH' ? 'bullish' : dir === 'BEARISH' ? 'bearish' : 'neutral');
+
+        document.getElementById('tomorrowDirection').textContent = dir;
+        document.getElementById('tomorrowOutlook').textContent =
+            `${tomorrowPrediction.gapDirection} expected | Key level: ${tomorrowPrediction.keyLevelDesc}`;
+        document.getElementById('tomorrowConf').textContent =
+            `${tomorrowPrediction.confidence}% confidence | Gap est: ${tomorrowPrediction.gapEstimate > 0 ? '+' : ''}$${tomorrowPrediction.gapEstimate}`;
+        document.getElementById('tomorrowRange').textContent =
+            `$${tomorrowPrediction.predictedLow} — $${tomorrowPrediction.predictedHigh}`;
+
+        // Tomorrow metrics
+        document.getElementById('overnightBias').textContent = tomorrowPrediction.direction;
+        document.getElementById('overnightBias').style.color =
+            dir === 'BULLISH' ? 'var(--accent-green)' : dir === 'BEARISH' ? 'var(--accent-red)' : 'var(--accent-yellow)';
+        document.getElementById('overnightBiasSub').textContent =
+            `Composite: ${tomorrowPrediction.composite > 0 ? '+' : ''}${tomorrowPrediction.composite.toFixed(3)}`;
+
+        document.getElementById('expectedGap').textContent =
+            `${tomorrowPrediction.gapEstimate > 0 ? '+' : ''}$${tomorrowPrediction.gapEstimate}`;
+        document.getElementById('expectedGap').style.color =
+            tomorrowPrediction.gapEstimate > 0 ? 'var(--accent-green)' : tomorrowPrediction.gapEstimate < -0.1 ? 'var(--accent-red)' : 'var(--text-primary)';
+        document.getElementById('expectedGapSub').textContent = tomorrowPrediction.gapDirection;
+
+        document.getElementById('keyLevel').textContent = '$' + tomorrowPrediction.keyLevel;
+        document.getElementById('keyLevelSub').textContent = tomorrowPrediction.keyLevelDesc;
+
+        // Catalyst summary
+        const topCatalyst = tomorrowPrediction.catalysts[0];
+        if (topCatalyst) {
+            document.getElementById('catalyst').textContent = topCatalyst.icon;
+            document.getElementById('catalyst').style.fontSize = '28px';
+            document.getElementById('catalystSub').textContent = topCatalyst.text.substring(0, 50) + '...';
+        }
+
+        // Tomorrow trade cards
+        const container = document.getElementById('tomorrowTradeCards');
+        if (tomorrowStrategy.strategies.length) {
+            container.innerHTML = tomorrowStrategy.strategies.map(s => buildTradeCardHTML(s, false)).join('');
+        } else {
+            container.innerHTML = `<div class="trade-card" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                No clear overnight setups. Wait for pre-market data.
+            </div>`;
+        }
+
+        // Catalyst list
+        renderCatalysts();
+        renderTomorrowTechnicals();
+        renderSectorMomentum();
+    }
+
+    function renderCatalysts() {
+        const container = document.getElementById('catalystList');
+        if (!tomorrowPrediction?.catalysts) return;
+
+        container.innerHTML = tomorrowPrediction.catalysts.map(c => `
+            <div class="catalyst-item">
+                <span class="catalyst-icon">${c.icon}</span>
+                <span class="catalyst-text">${c.text}</span>
+                <span class="catalyst-impact ${c.impact}">${c.impact.toUpperCase()}</span>
+            </div>
+        `).join('');
+    }
+
+    function renderTomorrowTechnicals() {
+        const container = document.getElementById('tomorrowTechnicals');
+        if (!tomorrowPrediction?.multiDayTechnicals) return;
+
+        container.innerHTML = tomorrowPrediction.multiDayTechnicals.map(ind => `
+            <div class="indicator-item">
+                <div class="indicator-name">${ind.name}</div>
+                <div class="indicator-value">${ind.value || '—'}</div>
+                <div class="indicator-signal ${ind.cls}">${ind.signal}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderSectorMomentum() {
+        const container = document.getElementById('sectorMomentum');
+        if (!tomorrowPrediction?.sectorMomentum) return;
+
+        const maxPct = Math.max(...tomorrowPrediction.sectorMomentum.map(s => Math.abs(s.changePct)), 1);
+
+        container.innerHTML = tomorrowPrediction.sectorMomentum.map(s => {
+            const pct = s.changePct;
+            const barWidth = Math.min(100, (Math.abs(pct) / maxPct) * 100);
+            const cls = pct >= 0 ? 'positive' : 'negative';
+            return `
+                <div class="sector-bar-item">
+                    <span class="sector-name">${s.name}</span>
+                    <div class="sector-bar-track">
+                        <div class="sector-bar-fill ${cls}" style="width: ${barWidth}%"></div>
+                    </div>
+                    <span class="sector-pct ${cls}">${pct > 0 ? '+' : ''}${pct.toFixed(2)}%</span>
+                </div>
+            `;
+        }).join('');
     }
 
     // ── Price Chart ────────────────────────────────────────────────────
@@ -151,10 +366,6 @@
         const ema9 = ta?.series?.ema9 || [];
         const bbUpper = ta?.series?.bb?.upper || [];
         const bbLower = ta?.series?.bb?.lower || [];
-
-        // Prediction zone (last 20% of chart as forecast)
-        const forecastStart = closes.length - 1;
-        const lastPrice = closes[closes.length - 1];
 
         if (priceChart) priceChart.destroy();
 
@@ -253,7 +464,7 @@
         const ctx = document.getElementById('signalChart').getContext('2d');
         const factorNames = ['Technical', 'Volatility', 'Cross-Asset', 'Sector', 'Mega-Cap', 'Sentiment', 'Micro'];
         const factorKeys = ['technical', 'volatility', 'crossAsset', 'sector', 'megaCap', 'sentiment', 'microstructure'];
-        const scores = factorKeys.map(k => ((prediction.factors[k]?.score || 0) + 1) / 2 * 100); // normalize 0-100
+        const scores = factorKeys.map(k => ((prediction.factors[k]?.score || 0) + 1) / 2 * 100);
 
         if (signalChart) signalChart.destroy();
 
@@ -342,7 +553,6 @@
 
         container.innerHTML = html;
 
-        // Toggle detail expansion
         container.querySelectorAll('.factor-item').forEach(item => {
             item.querySelector('.factor-header').addEventListener('click', () => {
                 item.classList.toggle('expanded');
@@ -407,94 +617,6 @@
                 </div>
             `;
         }).join('');
-    }
-
-    // ── Strategy Panel ─────────────────────────────────────────────────
-    function renderStrategy() {
-        if (!strategy) return;
-
-        const container = document.getElementById('strategyContent');
-        let html = `
-            <div class="strategy-timing">
-                <div class="timing-badge">${prediction.timing}</div>
-                <span>${strategy.timingAdvice}</span>
-            </div>
-            <div class="strategy-sizing">${strategy.sizeAdvice}</div>
-            <div class="strategy-iv">Implied Volatility: ${strategy.iv}% | Hours to Close: ${strategy.hoursToClose}</div>
-            <div class="strategy-list">
-        `;
-
-        strategy.strategies.forEach(s => {
-            html += `
-                <div class="strategy-card ${s.type.toLowerCase()}">
-                    <div class="strategy-card-header">
-                        <h4>${s.name}</h4>
-                        <span class="strike-badge">Strike: $${s.strike}</span>
-                    </div>
-                    <div class="strategy-card-body">
-                        <div class="strategy-rationale">${s.rationale}</div>
-                        <div class="strategy-grid">
-                            <div><span class="label">Premium</span><span class="value">$${s.premium}</span></div>
-                            <div><span class="label">Max Risk</span><span class="value">$${s.maxRisk}</span></div>
-                            <div><span class="label">Max Reward</span><span class="value">${typeof s.maxReward === 'number' ? '$' + s.maxReward : s.maxReward}</span></div>
-                            <div><span class="label">Breakeven</span><span class="value">${typeof s.breakeven === 'number' ? '$' + s.breakeven : s.breakeven}</span></div>
-                            <div><span class="label">Target</span><span class="value">$${s.target}</span></div>
-                            <div><span class="label">Stop Loss</span><span class="value">$${s.stopLoss}</span></div>
-                        </div>
-                        <div class="greeks-row">
-                            <span>Δ ${s.greeks.delta}</span>
-                            <span>Γ ${s.greeks.gamma}</span>
-                            <span>Θ ${s.greeks.theta}</span>
-                            <span>V ${s.greeks.vega}</span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-
-        html += '</div>';
-        container.innerHTML = html;
-    }
-
-    // ── Risk Gauge ─────────────────────────────────────────────────────
-    function renderRiskGauge() {
-        if (!prediction) return;
-
-        const ctx = document.getElementById('riskGauge').getContext('2d');
-        const riskMap = { LOW: 25, MODERATE: 50, HIGH: 75, EXTREME: 95 };
-        const riskVal = riskMap[prediction.riskLevel] || 50;
-
-        if (riskGaugeChart) riskGaugeChart.destroy();
-
-        riskGaugeChart = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Risk', ''],
-                datasets: [{
-                    data: [riskVal, 100 - riskVal],
-                    backgroundColor: [
-                        riskVal < 40 ? '#0f8' : riskVal < 60 ? '#fc0' : riskVal < 80 ? '#f80' : '#f44',
-                        'rgba(255,255,255,0.05)',
-                    ],
-                    borderWidth: 0,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                cutout: '75%',
-                rotation: -90,
-                circumference: 180,
-                plugins: { legend: { display: false } },
-            },
-        });
-
-        document.getElementById('riskDetails').innerHTML = `
-            <div class="risk-level ${prediction.riskLevel.toLowerCase()}">${prediction.riskLevel}</div>
-            <div class="risk-item">VIX: ${quotes['^VIX']?.price?.toFixed(1) || '—'}</div>
-            <div class="risk-item">Confidence: ${prediction.confidence}%</div>
-            <div class="risk-item">ATR: $${prediction.atr?.toFixed(2) || '—'}</div>
-        `;
     }
 
     // ── Performance Backtest ───────────────────────────────────────────

@@ -461,5 +461,218 @@ const PredictionEngine = (() => {
         };
     }
 
-    return { predict };
+    // ── Next-Day Prediction ────────────────────────────────────────────
+    function predictNextDay(ta, quotes, news) {
+        // Use the same factor model but with adjustments for overnight holding
+        const todayPrediction = predict(ta, quotes, news);
+        const currentPrice = todayPrediction.currentPrice;
+        const atr = todayPrediction.atr;
+        const composite = todayPrediction.composite;
+
+        // Overnight bias: momentum tends to continue into next morning
+        // but with mean reversion for extreme moves
+        const todayChangePct = quotes.SPY?.changePct || 0;
+        let overnightBias = composite * 0.6; // carry 60% of today's signal
+        if (Math.abs(todayChangePct) > 1.5) {
+            // Extreme move today → expect some mean reversion
+            overnightBias -= todayChangePct * 0.1;
+        }
+        overnightBias = Math.max(-1, Math.min(1, overnightBias));
+
+        const absOvernightBias = Math.abs(overnightBias);
+        let direction = 'NEUTRAL';
+        if (absOvernightBias > 0.1) direction = overnightBias > 0 ? 'BULLISH' : 'BEARISH';
+
+        const confidence = Math.round(Math.min(85, absOvernightBias * 100 + 10));
+
+        // Gap estimate: based on after-hours sentiment + VIX
+        const vix = quotes['^VIX']?.price || 16;
+        const gapEstimate = overnightBias * atr * 0.3;
+        const gapDirection = gapEstimate > 0 ? 'Gap Up' : gapEstimate < -0.1 ? 'Gap Down' : 'Flat Open';
+
+        // Next day range is wider than 0DTE (full day ahead)
+        const nextDayRange = atr * 1.3;
+        const bias = overnightBias * nextDayRange * 0.35;
+        const predictedHigh = +(currentPrice + nextDayRange * 0.7 + bias).toFixed(2);
+        const predictedLow = +(currentPrice - nextDayRange * 0.7 + bias).toFixed(2);
+        const predictedClose = +(currentPrice + bias).toFixed(2);
+
+        // Key level: closest round number or significant technical level
+        const keyLevel = Math.round(currentPrice);
+        let keyLevelDesc = `$${keyLevel} psychological level`;
+        if (ta?.resistance && Math.abs(ta.resistance - currentPrice) < atr * 0.5) {
+            keyLevelDesc = `$${ta.resistance.toFixed(2)} resistance`;
+        } else if (ta?.support && Math.abs(ta.support - currentPrice) < atr * 0.5) {
+            keyLevelDesc = `$${ta.support.toFixed(2)} support`;
+        }
+
+        // Catalysts
+        const catalysts = generateCatalysts(quotes, news, ta);
+
+        // Sector leaders/laggards into tomorrow
+        const sectorMomentum = buildSectorMomentum(quotes);
+
+        // Multi-day technicals
+        const multiDayTechnicals = buildMultiDayTechnicals(ta, quotes);
+
+        return {
+            direction,
+            confidence,
+            composite: overnightBias,
+            predictedHigh,
+            predictedLow,
+            predictedClose,
+            gapEstimate: +gapEstimate.toFixed(2),
+            gapDirection,
+            keyLevel,
+            keyLevelDesc,
+            catalysts,
+            sectorMomentum,
+            multiDayTechnicals,
+            currentPrice,
+            atr,
+            riskLevel: todayPrediction.riskLevel,
+            factors: todayPrediction.factors,
+            weights: todayPrediction.weights,
+        };
+    }
+
+    function generateCatalysts(quotes, news, ta) {
+        const catalysts = [];
+
+        // Check VIX
+        const vix = quotes['^VIX'];
+        if (vix?.price > 22) {
+            catalysts.push({ icon: '⚠', text: `Elevated VIX at ${vix.price.toFixed(1)} — expect wide ranges and fast moves`, impact: 'bearish' });
+        } else if (vix?.price < 14) {
+            catalysts.push({ icon: '✓', text: `Low VIX at ${vix.price.toFixed(1)} — complacency may support slow grind higher`, impact: 'bullish' });
+        }
+
+        // Earnings/macro from news
+        const macroNews = news.filter(n => n.category === 'macro' || n.category === 'earnings');
+        if (macroNews.length > 0) {
+            const topNews = macroNews[0];
+            catalysts.push({ icon: '📰', text: topNews.title, impact: topNews.sentiment > 0.1 ? 'bullish' : topNews.sentiment < -0.1 ? 'bearish' : 'neutral' });
+        }
+
+        // Bond market signal
+        const tlt = quotes.TLT;
+        if (tlt?.changePct > 0.5) {
+            catalysts.push({ icon: '📉', text: `Bonds rallying (TLT +${tlt.changePct.toFixed(2)}%) — yields falling, risk-on setup`, impact: 'bullish' });
+        } else if (tlt?.changePct < -0.5) {
+            catalysts.push({ icon: '📈', text: `Bonds selling (TLT ${tlt.changePct.toFixed(2)}%) — yields rising, headwind for equities`, impact: 'bearish' });
+        }
+
+        // Mega-cap momentum
+        const megaCaps = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA'];
+        let megaBull = 0, megaBear = 0;
+        megaCaps.forEach(sym => {
+            const q = quotes[sym];
+            if (q?.changePct > 0.5) megaBull++;
+            if (q?.changePct < -0.5) megaBear++;
+        });
+        if (megaBull >= 5) {
+            catalysts.push({ icon: '🚀', text: `Strong mega-cap breadth: ${megaBull}/7 names up >0.5% — carry-over momentum`, impact: 'bullish' });
+        } else if (megaBear >= 5) {
+            catalysts.push({ icon: '🔻', text: `Weak mega-cap breadth: ${megaBear}/7 names down >0.5% — risk of follow-through selling`, impact: 'bearish' });
+        }
+
+        // Technical patterns
+        if (ta?.patterns?.length > 0) {
+            const p = ta.patterns[0];
+            catalysts.push({ icon: '📊', text: `${p.name} pattern detected — ${p.signal} signal for continuation`, impact: p.signal });
+        }
+
+        // EMA cross
+        if (ta?.movingAverages) {
+            const ma = ta.movingAverages;
+            if (ma.ema9 > ma.ema21 && ma.ema9Slope > 0) {
+                catalysts.push({ icon: '↗', text: 'EMA 9 above EMA 21 with rising slope — short-term uptrend intact', impact: 'bullish' });
+            } else if (ma.ema9 < ma.ema21 && ma.ema9Slope < 0) {
+                catalysts.push({ icon: '↘', text: 'EMA 9 below EMA 21 with falling slope — short-term downtrend', impact: 'bearish' });
+            }
+        }
+
+        // Fill in if we have few catalysts
+        if (catalysts.length < 3) {
+            catalysts.push({ icon: '🕐', text: 'Monitor pre-market futures for overnight direction confirmation', impact: 'neutral' });
+            catalysts.push({ icon: '📋', text: 'Check economic calendar for scheduled releases before the open', impact: 'neutral' });
+        }
+
+        return catalysts;
+    }
+
+    function buildSectorMomentum(quotes) {
+        const sectors = [
+            { sym: 'XLK', name: 'Technology' },
+            { sym: 'XLF', name: 'Financials' },
+            { sym: 'XLE', name: 'Energy' },
+            { sym: 'XLV', name: 'Healthcare' },
+            { sym: 'XLI', name: 'Industrials' },
+            { sym: 'XLU', name: 'Utilities' },
+        ];
+
+        return sectors.map(s => ({
+            name: s.name,
+            symbol: s.sym,
+            changePct: quotes[s.sym]?.changePct || 0,
+        })).sort((a, b) => b.changePct - a.changePct);
+    }
+
+    function buildMultiDayTechnicals(ta, quotes) {
+        const indicators = [];
+
+        if (ta?.rsi != null) {
+            let trend = 'Neutral';
+            if (ta.rsi < 35) trend = 'Oversold — bounce likely';
+            else if (ta.rsi > 65) trend = 'Overbought — pullback risk';
+            else if (ta.rsi > 50) trend = 'Bullish momentum';
+            else trend = 'Bearish momentum';
+            indicators.push({ name: 'RSI (14)', value: ta.rsi.toFixed(1), signal: trend,
+                cls: ta.rsi < 35 ? 'bullish' : ta.rsi > 65 ? 'bearish' : ta.rsi > 50 ? 'bullish' : 'bearish' });
+        }
+
+        if (ta?.movingAverages) {
+            const above = ta.movingAverages.ema9 > ta.movingAverages.ema21;
+            indicators.push({ name: 'EMA Trend', value: above ? 'Uptrend' : 'Downtrend',
+                signal: above ? '9 > 21, continuation' : '9 < 21, bearish cross',
+                cls: above ? 'bullish' : 'bearish' });
+        }
+
+        if (ta?.bollingerBands?.percentB != null) {
+            const pb = ta.bollingerBands.percentB;
+            let signal = 'Mid-band';
+            if (pb > 0.8) signal = 'Near upper band — extended';
+            else if (pb < 0.2) signal = 'Near lower band — oversold';
+            indicators.push({ name: 'BB %B', value: pb.toFixed(2), signal,
+                cls: pb > 0.8 ? 'bearish' : pb < 0.2 ? 'bullish' : 'neutral' });
+        }
+
+        if (ta?.macd) {
+            indicators.push({ name: 'MACD', value: ta.macd.histogram?.toFixed(3),
+                signal: ta.macd.histogram > 0 ? 'Positive histogram' : 'Negative histogram',
+                cls: ta.macd.histogram > 0 ? 'bullish' : 'bearish' });
+        }
+
+        if (ta?.atr && ta?.current?.price) {
+            const atrPct = (ta.atr / ta.current.price * 100).toFixed(2);
+            indicators.push({ name: 'ATR %', value: atrPct + '%', signal: 'Expected daily range',
+                cls: 'neutral' });
+        }
+
+        if (ta?.support && ta?.resistance) {
+            indicators.push({ name: 'Support', value: '$' + ta.support.toFixed(2), signal: 'Key downside level', cls: 'neutral' });
+            indicators.push({ name: 'Resistance', value: '$' + ta.resistance.toFixed(2), signal: 'Key upside level', cls: 'neutral' });
+        }
+
+        if (ta?.pivots?.pivot) {
+            indicators.push({ name: 'Pivot', value: '$' + ta.pivots.pivot.toFixed(2),
+                signal: ta.current?.price > ta.pivots.pivot ? 'Price above pivot' : 'Price below pivot',
+                cls: ta.current?.price > ta.pivots.pivot ? 'bullish' : 'bearish' });
+        }
+
+        return indicators;
+    }
+
+    return { predict, predictNextDay };
 })();
