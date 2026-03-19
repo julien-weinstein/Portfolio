@@ -8,6 +8,7 @@
     'use strict';
 
     let quotes = {}, chartData = [], ta = null, prediction = null, news = [], strategy = null;
+    let optionsChain = null;
     let priceChart = null;
     let marketStatus = null;
     let refreshTimer = null;
@@ -54,16 +55,19 @@
             marketStatus = DataEngine.getMarketStatus();
             [quotes, news] = await Promise.all([
                 DataEngine.fetchAllQuotes(),
-                Promise.resolve(DataEngine.fetchNews()),
+                DataEngine.fetchNews(),
             ]);
             chartData = await DataEngine.fetchPriceChart('SPY', '1d', '5m');
             ta = TechnicalAnalysis.analyze(chartData);
 
             // Only run prediction/strategy during actionable sessions
             if (marketStatus.session === 'regular') {
-                prediction = PredictionEngine.predict(ta, quotes, news);
-                strategy = OptionsStrategy.generateStrategy(prediction);
+                // Fetch options chain (don't block on failure)
+                optionsChain = await DataEngine.fetchOptionsChain('SPY').catch(() => null);
+                prediction = PredictionEngine.predict(ta, quotes, news, optionsChain);
+                strategy = OptionsStrategy.generateStrategy(prediction, optionsChain);
             } else {
+                optionsChain = null;
                 prediction = null;
                 strategy = null;
             }
@@ -203,7 +207,24 @@
             <span class="rec-type">${dir}</span>
         `;
 
+        // Show bid/ask if from real chain, otherwise just mid premium
+        const premiumDisplay = rec.fromChain && rec.bid != null
+            ? `$${rec.bid}/$${rec.ask}`
+            : `$${rec.premium}`;
+        const premiumLabel = rec.fromChain ? 'Bid/Ask' : 'Est. Premium';
+
+        const chainExtras = rec.fromChain ? `
+            <div class="rec-stat">
+                <span class="rec-stat-value">${rec.volume?.toLocaleString() || '—'}</span>
+                <span class="rec-stat-label">Volume</span>
+            </div>
+            <div class="rec-stat">
+                <span class="rec-stat-value">${rec.openInterest?.toLocaleString() || '—'}</span>
+                <span class="rec-stat-label">Open Int</span>
+            </div>` : '';
+
         details.innerHTML = `
+            ${rec.fromChain ? `<div class="data-badge live">Live Chain${strategy.chainUsed && optionsChain?.source === 'tradier' ? ' (Tradier)' : strategy.chainUsed && optionsChain?.source === 'yahoo' ? ' (Yahoo)' : ''}</div>` : '<div class="data-badge est">Estimated</div>'}
             <div class="rec-stats">
                 <div class="rec-stat main">
                     <span class="rec-stat-value">${rec.probITM}%</span>
@@ -214,13 +235,14 @@
                     <span class="rec-stat-label">Prob Profit</span>
                 </div>
                 <div class="rec-stat">
-                    <span class="rec-stat-value">$${rec.premium}</span>
-                    <span class="rec-stat-label">Premium</span>
+                    <span class="rec-stat-value">${premiumDisplay}</span>
+                    <span class="rec-stat-label">${premiumLabel}</span>
                 </div>
                 <div class="rec-stat">
                     <span class="rec-stat-value">$${rec.breakeven}</span>
                     <span class="rec-stat-label">Breakeven</span>
                 </div>
+                ${chainExtras}
             </div>
             <div class="rec-risk">
                 <span>Stop: <b class="red">$${rec.stopLoss}</b></span>
