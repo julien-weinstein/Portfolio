@@ -11,7 +11,6 @@ const DataEngine = (() => {
 
     // Free API keys (public, rate-limited — not secrets)
     const FINNHUB_KEY = 'cvs2p81r01qsfepo4q30cvs2p81r01qsfepo4q3g';
-    const TWELVE_KEY = 'demo'; // demo key works for basic quotes
 
     let _usingSimulated = false;
 
@@ -67,30 +66,7 @@ const DataEngine = (() => {
         return Object.keys(results).length > 0 ? results : null;
     }
 
-    // ── Twelve Data (backup — CORS enabled) ──────────────────────────
-    async function twelveDataQuote(symbol) {
-        try {
-            const sym = symbol === '^VIX' ? 'VIX' : symbol;
-            const resp = await fetch(
-                `https://api.twelvedata.com/quote?symbol=${sym}&apikey=${TWELVE_KEY}`,
-                { signal: AbortSignal.timeout(6000) }
-            );
-            if (!resp.ok) return null;
-            const d = await resp.json();
-            if (!d.close || d.status === 'error') return null;
-            return {
-                price: parseFloat(d.close),
-                change: parseFloat(d.change) || 0,
-                changePct: parseFloat(d.percent_change) || 0,
-                high: parseFloat(d.high) || 0,
-                low: parseFloat(d.low) || 0,
-                open: parseFloat(d.open) || 0,
-                prevClose: parseFloat(d.previous_close) || 0,
-            };
-        } catch {
-            return null;
-        }
-    }
+    // (Twelve Data removed — no CORS headers, doesn't work from browser)
 
     // ── Yahoo via CORS proxies (last resort for live data) ───────────
     const CORS_PROXIES = [
@@ -275,23 +251,7 @@ const DataEngine = (() => {
             return setCache(key, fh);
         }
 
-        // 2) Try Twelve Data for just SPY + VIX (rate limited)
-        console.log('[DataEngine] Trying Twelve Data...');
-        const tdSpy = await twelveDataQuote('SPY');
-        if (tdSpy) {
-            console.log('[DataEngine] Twelve Data OK — SPY $' + tdSpy.price);
-            const results = { SPY: tdSpy };
-            const tdVix = await twelveDataQuote('^VIX');
-            if (tdVix) results['^VIX'] = tdVix;
-            // Fill rest with simulated but use real SPY price as base
-            const sim = generateSimulatedQuotes(tdSpy.price);
-            Object.keys(sim).forEach(s => { if (!results[s]) results[s] = sim[s]; });
-            _usingSimulated = false;
-            removeSimulatedWarning();
-            return setCache(key, results);
-        }
-
-        // 3) Try Yahoo via CORS proxy
+        // 2) Try Yahoo via CORS proxy
         console.log('[DataEngine] Trying Yahoo via CORS proxy...');
         const yh = await yahooQuote(SYMBOLS);
         if (yh && yh.SPY) {
