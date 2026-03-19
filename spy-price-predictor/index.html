@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPY 0DTE Predictor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
@@ -11,7 +14,9 @@
 </head>
 <body>
     <header>
-        <h1>SPY 0DTE</h1>
+        <div class="header-left">
+            <h1>SPY <span class="header-badge">0DTE</span></h1>
+        </div>
         <div class="header-right">
             <div class="market-status" id="marketStatus">
                 <span class="status-dot"></span>
@@ -25,22 +30,28 @@
         <!-- Price bar -->
         <div class="price-bar">
             <div class="price-main">
-                <span class="price-label">SPY</span>
-                <span class="price-value" id="spyPrice">—</span>
+                <span class="price-value" id="spyPrice">--</span>
                 <span class="price-change" id="spyChange"></span>
             </div>
-            <div class="price-stat">
-                <span class="stat-label">VIX</span>
-                <span class="stat-value" id="vixValue">—</span>
+            <div class="price-stats-row">
+                <div class="price-stat">
+                    <span class="stat-label">VIX</span>
+                    <span class="stat-value" id="vixValue">--</span>
+                </div>
+                <div class="price-stat">
+                    <span class="stat-label">IV</span>
+                    <span class="stat-value" id="ivValue">--</span>
+                </div>
+                <div class="price-stat">
+                    <span class="stat-label">RANGE</span>
+                    <span class="stat-value" id="rangeValue">--</span>
+                </div>
             </div>
-            <div class="price-stat">
-                <span class="stat-label">IV</span>
-                <span class="stat-value" id="ivValue">—</span>
-            </div>
-            <div class="price-stat">
-                <span class="stat-label">RANGE</span>
-                <span class="stat-value" id="rangeValue">—</span>
-            </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="chart-box">
+            <canvas id="priceChart"></canvas>
         </div>
 
         <!-- THE recommendation -->
@@ -51,11 +62,6 @@
 
         <!-- Timing -->
         <div class="timing-bar" id="timingBar"></div>
-
-        <!-- Chart -->
-        <div class="chart-box">
-            <canvas id="priceChart"></canvas>
-        </div>
 
         <!-- Factors (collapsible) -->
         <details class="factors-panel">
