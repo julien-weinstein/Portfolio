@@ -3,108 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SPY 0DTE Options Predictor</title>
+    <title>SPY 0DTE Predictor</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
 </head>
 <body>
     <header>
-        <div class="header-left">
-            <h1>SPY 0DTE Predictor</h1>
-        </div>
+        <h1>SPY 0DTE</h1>
         <div class="header-right">
             <div class="market-status" id="marketStatus">
                 <span class="status-dot"></span>
-                <span class="status-text">Loading...</span>
+                <span class="status-text">...</span>
             </div>
-            <div class="last-update" id="lastUpdate"></div>
+            <span class="last-update" id="lastUpdate"></span>
         </div>
     </header>
 
     <main>
-        <!-- Hero: Signal + Key Numbers -->
-        <section class="hero" id="hero">
-            <div class="hero-signal" id="heroSignal">
-                <div class="hero-direction" id="heroDirection">—</div>
-                <div class="hero-conf" id="heroConf"></div>
+        <!-- Price bar -->
+        <div class="price-bar">
+            <div class="price-main">
+                <span class="price-label">SPY</span>
+                <span class="price-value" id="spyPrice">—</span>
+                <span class="price-change" id="spyChange"></span>
             </div>
-            <div class="hero-metrics">
-                <div class="hero-metric">
-                    <div class="hero-metric-label">SPY</div>
-                    <div class="hero-metric-value" id="heroSpyPrice">—</div>
-                    <div class="hero-metric-sub" id="heroSpyChange"></div>
-                </div>
-                <div class="hero-metric">
-                    <div class="hero-metric-label">VIX</div>
-                    <div class="hero-metric-value" id="heroVix">—</div>
-                    <div class="hero-metric-sub" id="heroVixChange"></div>
-                </div>
-                <div class="hero-metric">
-                    <div class="hero-metric-label">PREDICTED RANGE</div>
-                    <div class="hero-metric-value" id="heroRange">—</div>
-                    <div class="hero-metric-sub" id="heroRangeSub"></div>
-                </div>
-                <div class="hero-metric">
-                    <div class="hero-metric-label">0DTE IV</div>
-                    <div class="hero-metric-value" id="heroIV">—</div>
-                    <div class="hero-metric-sub" id="heroTimeSub"></div>
-                </div>
+            <div class="price-stat">
+                <span class="stat-label">VIX</span>
+                <span class="stat-value" id="vixValue">—</span>
             </div>
-            <div class="hero-timing" id="heroTiming"></div>
-        </section>
+            <div class="price-stat">
+                <span class="stat-label">IV</span>
+                <span class="stat-value" id="ivValue">—</span>
+            </div>
+            <div class="price-stat">
+                <span class="stat-label">RANGE</span>
+                <span class="stat-value" id="rangeValue">—</span>
+            </div>
+        </div>
 
-        <!-- Strike Picker — 3 options -->
-        <section class="strike-section">
-            <h2 class="section-title">Pick Your Strike</h2>
-            <div class="strike-table" id="strikeTable">
-                <!-- Populated by JS -->
-            </div>
-        </section>
+        <!-- THE recommendation -->
+        <div class="rec-card" id="recCard">
+            <div class="rec-signal" id="recSignal">ANALYZING...</div>
+            <div class="rec-details" id="recDetails"></div>
+        </div>
+
+        <!-- Timing -->
+        <div class="timing-bar" id="timingBar"></div>
 
         <!-- Chart -->
-        <section class="chart-section">
-            <div class="chart-container">
-                <div class="chart-header">
-                    <h3>SPY Price Action</h3>
-                    <div class="chart-controls">
-                        <button class="btn active" data-range="1D">1D</button>
-                        <button class="btn" data-range="5D">5D</button>
-                        <button class="btn" data-range="1M">1M</button>
-                        <button class="btn" data-range="3M">3M</button>
-                    </div>
-                </div>
-                <canvas id="priceChart"></canvas>
-            </div>
-        </section>
+        <div class="chart-box">
+            <canvas id="priceChart"></canvas>
+        </div>
 
-        <!-- Analysis: 2-column -->
-        <section class="analysis-row">
-            <div class="panel">
-                <h3>Factor Scores <span class="panel-sub">(click to expand)</span></h3>
-                <div class="factor-list" id="factorList"></div>
-            </div>
-            <div class="panel">
-                <h3>Technical Indicators</h3>
-                <div class="indicator-grid" id="technicalIndicators"></div>
-            </div>
-        </section>
-
-        <!-- Performance -->
-        <section class="performance-row">
-            <div class="panel full">
-                <h3>Model Backtest (Simulated 60 Day)</h3>
-                <canvas id="performanceChart"></canvas>
-                <div class="performance-stats" id="performanceStats"></div>
-            </div>
-        </section>
+        <!-- Factors (collapsible) -->
+        <details class="factors-panel">
+            <summary>Model Factors</summary>
+            <div id="factorList"></div>
+        </details>
     </main>
 
     <footer>
-        <p><strong>Disclaimer:</strong> Educational and informational only.
-        0DTE options are extremely risky. Not financial advice.</p>
+        <strong>Not financial advice.</strong> 0DTE options are extremely risky. Educational only.
     </footer>
 
     <script src="data-engine.js"></script>
