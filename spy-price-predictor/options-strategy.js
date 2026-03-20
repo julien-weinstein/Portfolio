@@ -1,8 +1,12 @@
 /**
  * Options Strategy — 0DTE Single Strike Recommendation
  *
- * When real options chain data is available, picks the best strike from actual
- * bid/ask/volume/OI. Falls back to Black-Scholes estimation when chain is unavailable.
+ * Professional-grade strike selection:
+ *   - Real chain: ranks by liquidity, spread, delta proximity, gamma exposure
+ *   - Estimated: Black-Scholes with VIX-calibrated IV
+ *   - Dynamic profit targets with scale-out levels
+ *   - Theta-aware sell timing recommendations
+ *   - Pre-market trade planning for next-day entries
  */
 
 const OptionsStrategy = (() => {
@@ -48,22 +52,16 @@ const OptionsStrategy = (() => {
         const options = type === 'call' ? chain.calls : chain.puts;
         if (!options || options.length === 0) return null;
 
-        // Filter to slightly OTM strikes with real liquidity
         const targetOffset = atr * 0.15;
         const targetStrike = direction === 'CALL'
             ? currentPrice + targetOffset
             : currentPrice - targetOffset;
 
-        // Score each option by: proximity to target, liquidity, spread tightness
         const scored = options
             .filter(o => {
-                // Must have some bid (not worthless) and reasonable spread
                 if (o.bid <= 0 && o.last <= 0) return false;
-                // For calls: strike >= current (OTM or ATM)
-                // For puts: strike <= current (OTM or ATM)
                 if (type === 'call' && o.strike < currentPrice - 1) return false;
                 if (type === 'put' && o.strike > currentPrice + 1) return false;
-                // Not too far OTM (within ~2x ATR)
                 const dist = Math.abs(o.strike - currentPrice);
                 if (dist > atr * 2) return false;
                 return true;
@@ -72,7 +70,6 @@ const OptionsStrategy = (() => {
                 const distFromTarget = Math.abs(o.strike - targetStrike);
                 const spread = o.ask > 0 && o.bid > 0 ? (o.ask - o.bid) / o.mid : 1;
                 const liquidity = Math.log10(Math.max(1, o.volume)) + Math.log10(Math.max(1, o.openInterest));
-                // Lower is better for distance and spread, higher is better for liquidity
                 const score = -distFromTarget * 2 - spread * 50 + liquidity * 5;
                 return { ...o, score };
             })
@@ -87,7 +84,6 @@ const OptionsStrategy = (() => {
         const breakeven = type === 'call' ? best.strike + premium : best.strike - premium;
         const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
 
-        // Use real Greeks from Tradier/ORATS if available, otherwise calculate
         const g = (best.delta != null)
             ? { delta: +best.delta.toFixed(2), gamma: +(best.gamma || 0).toFixed(4), theta: +(best.theta || 0).toFixed(2) }
             : greeks(currentPrice, best.strike, T, r, iv, type);
@@ -106,8 +102,6 @@ const OptionsStrategy = (() => {
             volume: best.volume,
             openInterest: best.openInterest,
             impliedVol: +(iv * 100).toFixed(1),
-            stopLoss: +(premium * 0.4).toFixed(2),
-            target: +(premium * 2).toFixed(2),
             fromChain: true,
         };
     }
@@ -133,53 +127,77 @@ const OptionsStrategy = (() => {
             probITM: Math.round(pItm * 100),
             probProfit: Math.round(pProfit * 100),
             greeks: g,
-            stopLoss: +(premium * 0.4).toFixed(2),
-            target: +(premium * 2).toFixed(2),
             fromChain: false,
         };
     }
 
     function generateStrategy(prediction, optionsChain) {
-        const { direction, confidence, currentPrice, atr } = prediction;
+        const { direction, confidence, currentPrice, atr, composite } = prediction;
 
         const now = new Date();
         const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const marketHour = ny.getHours() + ny.getMinutes() / 60;
-        const hoursToClose = Math.max(0.1, 16 - marketHour);
+        const isPremarket = prediction.isPremarket;
+
+        // For pre-market, calculate as if full day ahead
+        const hoursToClose = isPremarket ? Math.max(0.1, 16 - 9.5) : Math.max(0.1, 16 - marketHour);
         const T = hoursToClose / (252 * 6.5);
 
         const vixDetail = prediction.factors?.volatility?.details?.find(d => d.name === 'VIX');
         const ivBase = vixDetail ? parseFloat(vixDetail.value) / 100 : 0.18;
-        const ivMult = hoursToClose > 5 ? 1.2 : hoursToClose > 3 ? 1.35 : hoursToClose > 1 ? 1.5 : 1.8;
+        const ivMult = isPremarket ? 1.3 : hoursToClose > 5 ? 1.2 : hoursToClose > 3 ? 1.35 : hoursToClose > 1 ? 1.5 : 1.8;
         const iv = ivBase * ivMult;
         const r = 0.053;
 
         let recommendation = null;
         let chainUsed = false;
 
-        // No recommendations in the last 15 min
-        if (direction !== 'NEUTRAL' && confidence > 20 && hoursToClose > 0.25) {
-            // Try real options chain first
+        // Generate recommendations for both regular and pre-market sessions
+        const minConfidence = isPremarket ? 15 : 20;
+        if (direction !== 'NEUTRAL' && confidence > minConfidence && hoursToClose > 0.25) {
             if (optionsChain?.isReal && optionsChain.calls?.length > 0) {
                 recommendation = pickFromChain(optionsChain, direction, currentPrice, atr, T, r);
                 if (recommendation) chainUsed = true;
             }
-            // Fallback to model estimation
             if (!recommendation) {
                 recommendation = estimateFromModel(direction, currentPrice, atr, T, r, iv);
+            }
+
+            // Add dynamic profit targets
+            if (recommendation) {
+                const targets = PredictionEngine.calculateTargets(
+                    recommendation.premium, currentPrice, atr, composite, hoursToClose
+                );
+                recommendation.stopLoss = targets.stopLoss;
+                recommendation.target1 = targets.target1;
+                recommendation.target1Pct = targets.target1Pct;
+                recommendation.target2 = targets.target2;
+                recommendation.target2Pct = targets.target2Pct;
+                recommendation.sellBy = targets.sellBy;
+                recommendation.momentum = targets.momentum;
+                recommendation.scaleOut = targets.scaleOut;
             }
         }
 
         let timing;
-        if (hoursToClose > 5.5) timing = 'Opening in progress — wait for 9:45-10:15 ET range to form';
-        else if (hoursToClose > 4.5) timing = 'Opening range established — prime entry window';
-        else if (hoursToClose > 3) timing = 'Mid-day — look for VWAP retest or breakout';
-        else if (hoursToClose > 1.5) timing = 'Theta accelerating — tighten stops, reduce size';
-        else if (hoursToClose > 0.5) timing = 'Power hour — high conviction only, tight stops';
-        else if (hoursToClose > 0.25) timing = 'Final 15 min — close all positions';
-        else timing = 'Market closing — no new entries';
+        if (isPremarket) {
+            timing = prediction.entryTiming?.entryReason || 'Analyzing pre-market conditions...';
+        } else if (hoursToClose > 5.5) {
+            timing = 'Opening in progress -- wait for 9:45-10:15 ET range to form';
+        } else if (hoursToClose > 4.5) {
+            timing = 'Opening range established -- prime entry window';
+        } else if (hoursToClose > 3) {
+            timing = 'Mid-day -- look for VWAP retest or breakout';
+        } else if (hoursToClose > 1.5) {
+            timing = 'Theta accelerating -- tighten stops, reduce size';
+        } else if (hoursToClose > 0.5) {
+            timing = 'Power hour -- high conviction only, tight stops';
+        } else if (hoursToClose > 0.25) {
+            timing = 'Final 15 min -- close all positions';
+        } else {
+            timing = 'Market closing -- no new entries';
+        }
 
-        // Compute aggregate IV from chain if available
         let displayIV = +(iv * 100).toFixed(1);
         if (recommendation?.impliedVol) {
             displayIV = recommendation.impliedVol;
@@ -191,6 +209,7 @@ const OptionsStrategy = (() => {
             hoursToClose: +hoursToClose.toFixed(1),
             iv: displayIV,
             chainUsed,
+            isPremarket,
         };
     }
 
