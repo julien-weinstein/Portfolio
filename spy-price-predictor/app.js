@@ -2,7 +2,7 @@
  * App — Main controller
  *
  * Market-session aware: adjusts UI, recommendations, and refresh rate.
- * Now includes pre-market trade planning with entry timing and sell targets.
+ * Includes pre-market trade planning with entry timing and sell targets.
  */
 (async function () {
     'use strict';
@@ -12,6 +12,7 @@
     let priceChart = null;
     let marketStatus = null;
     let refreshTimer = null;
+    let currentRange = '1d';
 
     function hexToRgba(hex, alpha) {
         const r = parseInt(hex.slice(1, 3), 16);
@@ -23,9 +24,33 @@
     async function init() {
         marketStatus = DataEngine.getMarketStatus();
         updateMarketStatusUI();
+        setupChartRangeButtons();
         await refresh();
         setInterval(updateMarketStatusAndSchedule, 30_000);
         scheduleRefresh();
+    }
+
+    function setupChartRangeButtons() {
+        const container = document.getElementById('chartRangeBtns');
+        if (!container) return;
+        container.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.chart-range-btn');
+            if (!btn) return;
+            const range = btn.dataset.range;
+            if (range === currentRange) return;
+            currentRange = range;
+            container.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            // Update chart title
+            const titles = { '1d': 'SPY INTRADAY', '5d': 'SPY 5-DAY', '1mo': 'SPY 1-MONTH' };
+            const titleEl = document.getElementById('chartTitle');
+            if (titleEl) titleEl.textContent = titles[range] || 'SPY';
+            // Fetch new chart data
+            const intervals = { '1d': '5m', '5d': '15m', '1mo': '1h' };
+            chartData = await DataEngine.fetchPriceChart('SPY', range, intervals[range]);
+            ta = TechnicalAnalysis.analyze(chartData);
+            renderChart();
+        });
     }
 
     function scheduleRefresh() {
@@ -55,13 +80,14 @@
                 DataEngine.fetchAllQuotes(),
                 DataEngine.fetchNews(),
             ]);
-            chartData = await DataEngine.fetchPriceChart('SPY', '1d', '5m');
+
+            const intervals = { '1d': '5m', '5d': '15m', '1mo': '1h' };
+            chartData = await DataEngine.fetchPriceChart('SPY', currentRange, intervals[currentRange]);
             ta = TechnicalAnalysis.analyze(chartData);
 
             const session = marketStatus.session;
 
             if (session === 'regular' || session === 'premarket') {
-                // Fetch options chain during regular and pre-market
                 optionsChain = await DataEngine.fetchOptionsChain('SPY').catch(() => null);
                 prediction = PredictionEngine.predict(ta, quotes, news, optionsChain, session);
                 strategy = OptionsStrategy.generateStrategy(prediction, optionsChain);
@@ -84,12 +110,12 @@
         const el = document.getElementById('marketStatus');
         let label = s.label;
         if (s.opensIn && s.session !== 'regular') {
-            label += ` · Opens in ${s.opensIn}`;
+            label += ` · Opens ${s.opensIn}`;
         }
         if (s.session === 'regular' && s.minutesToClose != null) {
             const h = Math.floor(s.minutesToClose / 60);
             const m = s.minutesToClose % 60;
-            label += ` · ${h}h ${m}m to close`;
+            label += ` · ${h}h ${m}m`;
         }
         el.querySelector('.status-text').textContent = label;
         el.className = 'market-status ' + s.status;
@@ -251,7 +277,7 @@
             return;
         }
 
-        // ── Non-trading sessions (after-hours, closed) ──
+        // ── Non-trading sessions ──
         if (session !== 'regular' && session !== 'premarket') {
             card.className = 'rec-card session-info';
             if (session === 'afterhours') {
@@ -313,9 +339,7 @@
                 <span class="rec-stat-label">Open Int</span>
             </div>` : '';
 
-        const sourceLabel = rec.fromChain
-            ? `Live Chain${strategy.chainUsed && optionsChain?.source === 'tradier' ? ' (Tradier)' : strategy.chainUsed && optionsChain?.source === 'yahoo' ? ' (Yahoo)' : ''}`
-            : 'Estimated';
+        const sourceLabel = rec.fromChain ? 'Live Chain' : 'Estimated';
 
         details.innerHTML = `
             <div class="data-badge ${rec.fromChain ? 'live' : 'est'}">${sourceLabel}</div>
@@ -403,19 +427,29 @@
         if (priceChart) priceChart.destroy();
 
         const session = marketStatus?.session;
-
         const firstClose = closes[0] || 0;
         const lastClose = closes[closes.length - 1] || 0;
         const isUp = lastClose >= firstClose;
-        const lineColor = session === 'premarket' ? '#a78bfa'
-            : session === 'afterhours' ? '#a78bfa'
-            : session === 'closed' ? '#71717a'
-            : isUp ? '#10b981' : '#f43f5e';
+
+        const lineColor = session === 'premarket' ? '#818cf8'
+            : session === 'afterhours' ? '#eab308'
+            : session === 'closed' ? '#6b6b80'
+            : isUp ? '#22c55e' : '#ef4444';
 
         const gradient = ctx.createLinearGradient(0, 0, 0, ctx.canvas.clientHeight || 280);
-        gradient.addColorStop(0, hexToRgba(lineColor, 0.12));
-        gradient.addColorStop(0.7, hexToRgba(lineColor, 0.01));
+        gradient.addColorStop(0, hexToRgba(lineColor, 0.15));
+        gradient.addColorStop(0.5, hexToRgba(lineColor, 0.03));
         gradient.addColorStop(1, 'transparent');
+
+        const showVwap = session === 'regular' && currentRange === '1d';
+
+        // Time format based on range
+        const timeFormats = {
+            '1d': { tooltipFormat: 'h:mm a', unit: 'hour' },
+            '5d': { tooltipFormat: 'MMM d, h:mm a', unit: 'day' },
+            '1mo': { tooltipFormat: 'MMM d', unit: 'week' },
+        };
+        const tf = timeFormats[currentRange] || timeFormats['1d'];
 
         priceChart = new Chart(ctx, {
             type: 'line',
@@ -427,17 +461,19 @@
                         data: closes,
                         borderColor: lineColor,
                         backgroundColor: gradient,
-                        borderWidth: 2,
+                        borderWidth: 1.8,
                         pointRadius: 0,
                         pointHoverRadius: 4,
                         pointHoverBackgroundColor: lineColor,
+                        pointHoverBorderColor: '#111318',
+                        pointHoverBorderWidth: 2,
                         fill: true,
-                        tension: 0.3,
+                        tension: 0.25,
                     },
-                    ...(session === 'regular' ? [{
+                    ...(showVwap ? [{
                         label: 'VWAP',
                         data: vwap,
-                        borderColor: 'rgba(161, 161, 170, 0.35)',
+                        borderColor: 'rgba(152, 152, 168, 0.3)',
                         borderWidth: 1,
                         borderDash: [4, 4],
                         pointRadius: 0,
@@ -451,53 +487,77 @@
                 interaction: { intersect: false, mode: 'index' },
                 plugins: {
                     legend: {
-                        display: true,
+                        display: showVwap,
                         position: 'top',
+                        align: 'end',
                         labels: {
-                            color: '#71717a',
-                            font: { family: 'Inter, sans-serif', size: 11, weight: '500' },
+                            color: '#6b6b80',
+                            font: { family: 'Inter, sans-serif', size: 10, weight: '500' },
                             usePointStyle: true,
                             pointStyle: 'line',
-                            padding: 20,
+                            padding: 16,
+                            boxWidth: 16,
                         },
                     },
                     tooltip: {
-                        backgroundColor: '#18181b',
-                        titleColor: '#a1a1aa',
-                        bodyColor: '#fafafa',
-                        borderColor: 'rgba(255,255,255,0.06)',
+                        backgroundColor: '#1a1c24',
+                        titleColor: '#9898a8',
+                        bodyColor: '#f0f0f5',
+                        borderColor: 'rgba(255,255,255,0.08)',
                         borderWidth: 1,
                         cornerRadius: 8,
-                        padding: 12,
+                        padding: { top: 10, bottom: 10, left: 14, right: 14 },
                         titleFont: { family: 'Inter, sans-serif', size: 11, weight: '500' },
-                        bodyFont: { family: 'Inter, sans-serif', size: 13, weight: '600' },
+                        bodyFont: { family: 'Inter, sans-serif', size: 14, weight: '700' },
                         displayColors: false,
                         callbacks: {
-                            label: (c) => '$' + c.parsed.y?.toFixed(2),
+                            title: (items) => {
+                                if (!items[0]) return '';
+                                const d = new Date(items[0].parsed.x);
+                                if (currentRange === '1d') {
+                                    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+                                }
+                                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+                            },
+                            label: (c) => {
+                                if (c.dataset.label === 'VWAP') return 'VWAP: $' + c.parsed.y?.toFixed(2);
+                                return '$' + c.parsed.y?.toFixed(2);
+                            },
                         },
                     },
                 },
                 scales: {
                     x: {
                         type: 'time',
-                        time: { tooltipFormat: 'h:mm a' },
+                        time: {
+                            tooltipFormat: tf.tooltipFormat,
+                            unit: tf.unit,
+                        },
                         ticks: {
-                            color: '#52525b',
+                            color: '#4a4a5a',
                             maxTicksLimit: 7,
-                            font: { family: 'Inter, sans-serif', size: 11 },
+                            font: { family: 'Inter, sans-serif', size: 10 },
                         },
                         grid: { display: false },
                         border: { display: false },
                     },
                     y: {
+                        position: 'right',
                         ticks: {
-                            color: '#52525b',
-                            font: { family: 'Inter, sans-serif', size: 11 },
+                            color: '#4a4a5a',
+                            font: { family: 'Inter, sans-serif', size: 10 },
                             callback: (v) => '$' + v.toFixed(0),
+                            maxTicksLimit: 6,
                         },
-                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        grid: {
+                            color: 'rgba(255,255,255,0.025)',
+                            drawTicks: false,
+                        },
                         border: { display: false },
                     },
+                },
+                layout: {
+                    padding: { top: 4, bottom: 0, left: 0, right: 0 },
                 },
             },
         });
@@ -529,7 +589,7 @@
             html += `
                 <div class="factor">
                     <div class="factor-head">
-                        <span>${names[key] || key} <span class="factor-wt">${weight}%</span></span>
+                        <span class="factor-name">${names[key] || key} <span class="factor-wt">${weight}%</span></span>
                         <span class="factor-val ${cls}">${score > 0 ? '+' : ''}${score.toFixed(2)}</span>
                     </div>
                     <div class="factor-bar-bg">

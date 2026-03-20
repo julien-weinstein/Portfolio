@@ -2,7 +2,7 @@
  * Options Strategy — 0DTE Single Strike Recommendation
  *
  * Professional-grade strike selection:
- *   - Real chain: ranks by liquidity, spread, delta proximity, gamma exposure
+ *   - Real chain (Yahoo): ranks by liquidity, spread, delta proximity
  *   - Estimated: Black-Scholes with VIX-calibrated IV
  *   - Dynamic profit targets with scale-out levels
  *   - Theta-aware sell timing recommendations

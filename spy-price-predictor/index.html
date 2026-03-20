@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPY 0DTE Predictor</title>
+    <meta name="theme-color" content="#08090c">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -27,6 +28,7 @@
     </header>
 
     <main>
+        <!-- Price bar -->
         <div class="price-bar">
             <div class="price-main">
                 <span class="price-value" id="spyPrice">--</span>
@@ -48,17 +50,29 @@
             </div>
         </div>
 
+        <!-- Chart -->
         <div class="chart-box">
+            <div class="chart-header">
+                <span class="chart-title" id="chartTitle">SPY INTRADAY</span>
+                <div class="chart-range-btns" id="chartRangeBtns">
+                    <button class="chart-range-btn active" data-range="1d">1D</button>
+                    <button class="chart-range-btn" data-range="5d">5D</button>
+                    <button class="chart-range-btn" data-range="1mo">1M</button>
+                </div>
+            </div>
             <canvas id="priceChart"></canvas>
         </div>
 
+        <!-- THE recommendation -->
         <div class="rec-card" id="recCard">
             <div class="rec-signal" id="recSignal">ANALYZING...</div>
             <div class="rec-details" id="recDetails"></div>
         </div>
 
+        <!-- Timing -->
         <div class="timing-bar" id="timingBar"></div>
 
+        <!-- Factors (collapsible) -->
         <details class="factors-panel">
             <summary>Model Factors</summary>
             <div id="factorList"></div>

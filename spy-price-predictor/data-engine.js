@@ -1,21 +1,23 @@
 /**
- * Data Engine — Live market data via Finnhub + Yahoo CORS proxies.
+ * Data Engine — Live market data aggregation
  *
- * Quotes:  Finnhub → Yahoo proxy → Simulated fallback.
- * News:    Finnhub market news → simulated fallback (with keyword sentiment scoring).
- * Options: Tradier sandbox (CORS, Greeks/IV) → Yahoo proxy → null.
+ * Quotes:  Finnhub (primary, real-time) → Yahoo CORS proxy → Simulated fallback
+ * Charts:  Finnhub candles (primary) → Yahoo chart → Simulated fallback
+ * News:    Finnhub market news → simulated fallback
+ * Options: Yahoo chain via CORS → null
+ *
+ * Note: Tradier sandbox removed — it returns fake/test data, not real prices.
  */
 
 const DataEngine = (() => {
     const cache = {};
-    const CACHE_TTL = 30_000; // 30s for fresher prices
+    const CACHE_TTL = 30_000;
 
     // Free API keys (public, rate-limited — not secrets)
     const FINNHUB_KEY = 'cvs2p81r01qsfepo4q30cvs2p81r01qsfepo4q3g';
-    // Tradier sandbox — paper trading token, safe to expose (no real money)
-    const TRADIER_SANDBOX_TOKEN = 'qNSxKgkbpFhPbVDMBqCK4AznYO7b';
 
     let _usingSimulated = false;
+    let _lastKnownSpyPrice = null;
 
     function cached(key, ttl = CACHE_TTL) {
         const entry = cache[key];
@@ -53,13 +55,11 @@ const DataEngine = (() => {
     }
 
     async function finnhubAllQuotes(symbols) {
-        // Fetch in small batches to stay under rate limit
         const results = {};
         const batchSize = 10;
         for (let i = 0; i < symbols.length; i += batchSize) {
             const batch = symbols.slice(i, i + batchSize);
             const promises = batch.map(async sym => {
-                // Finnhub uses different symbol format for VIX
                 const fhSym = sym === '^VIX' ? 'VIX' : sym;
                 const q = await finnhubQuote(fhSym);
                 if (q) results[sym] = q;
@@ -69,12 +69,10 @@ const DataEngine = (() => {
         return Object.keys(results).length > 0 ? results : null;
     }
 
-    // (Twelve Data removed — no CORS headers, doesn't work from browser)
-
-    // ── Yahoo via CORS proxies (last resort for live data) ───────────
+    // ── Yahoo via CORS proxies (fallback for quotes & charts) ───────
     const CORS_PROXIES = [
-        'https://api.allorigins.win/raw?url=',
         'https://corsproxy.io/?',
+        'https://api.allorigins.win/raw?url=',
         'https://api.codetabs.com/v1/proxy?quest=',
     ];
 
@@ -124,13 +122,16 @@ const DataEngine = (() => {
                     low: q.low?.[i], close: q.close?.[i],
                     volume: q.volume?.[i],
                 })).filter(d => d.close != null);
-                if (data.length > 10) return data;
+                if (data.length > 10) {
+                    console.log(`[DataEngine] Yahoo chart: ${data.length} bars, last $${data[data.length - 1].close}`);
+                    return data;
+                }
             } catch { continue; }
         }
         return null;
     }
 
-    // ── Finnhub candles for chart ────────────────────────────────────
+    // ── Finnhub candles for chart (primary — real data) ────────────
     async function finnhubChart(symbol, rangeDays) {
         try {
             const now = Math.floor(Date.now() / 1000);
@@ -143,52 +144,15 @@ const DataEngine = (() => {
             if (!resp.ok) return null;
             const d = await resp.json();
             if (d.s !== 'ok' || !d.t) return null;
-            return d.t.map((t, i) => ({
+            const data = d.t.map((t, i) => ({
                 time: t * 1000,
                 open: d.o[i], high: d.h[i],
                 low: d.l[i], close: d.c[i],
                 volume: d.v[i],
             }));
-        } catch {
-            return null;
-        }
-    }
-
-    // ── Tradier chart (timesales — CORS, reliable intraday) ──────────
-    async function tradierChart(symbol, rangeDays) {
-        try {
-            // Tradier timesales gives 1min/5min/15min intraday bars
-            const interval = rangeDays <= 1 ? '5min' : rangeDays <= 5 ? '15min' : '60min';
-            // Build start/end dates
-            const now = new Date();
-            const start = new Date(now.getTime() - rangeDays * 86400_000);
-            const startStr = start.toISOString().slice(0, 10);
-            const endStr = now.toISOString().slice(0, 10);
-
-            const url = `https://sandbox.tradier.com/v1/markets/timesales?symbol=${symbol}&interval=${interval}&start=${startStr}&end=${endStr}`;
-            const resp = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
-                signal: AbortSignal.timeout(8000),
-            });
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            const series = json.series?.data;
-            if (!Array.isArray(series) || series.length < 10) return null;
-
-            const data = series.map(d => ({
-                time: new Date(d.time || d.timestamp).getTime(),
-                open: d.open,
-                high: d.high,
-                low: d.low,
-                close: d.close,
-                volume: d.volume,
-            })).filter(d => d.close != null && !isNaN(d.time));
-
-            if (data.length < 10) return null;
-            console.log(`[DataEngine] Tradier chart: ${data.length} bars, last close $${data[data.length - 1].close}`);
+            console.log(`[DataEngine] Finnhub chart: ${data.length} bars, last $${data[data.length - 1]?.close}`);
             return data;
-        } catch (e) {
-            console.log('[DataEngine] Tradier chart error:', e.message);
+        } catch {
             return null;
         }
     }
@@ -198,7 +162,7 @@ const DataEngine = (() => {
         if (document.getElementById('simWarning')) return;
         const warn = document.createElement('div');
         warn.id = 'simWarning';
-        warn.style.cssText = 'background:#332200;color:#ffcc00;text-align:center;padding:6px;font-size:11px;position:fixed;bottom:0;left:0;right:0;z-index:999;';
+        warn.style.cssText = 'background:rgba(51,34,0,0.95);color:#ffcc00;text-align:center;padding:8px 16px;font-size:11px;font-weight:500;position:fixed;bottom:0;left:0;right:0;z-index:999;backdrop-filter:blur(8px);border-top:1px solid rgba(255,204,0,0.2);';
         warn.textContent = 'Live data unavailable — showing simulated prices. Refresh to retry.';
         document.body.appendChild(warn);
     }
@@ -234,7 +198,8 @@ const DataEngine = (() => {
     }
 
     function generateSimulatedQuotes(baseSpyPrice) {
-        const base = baseSpyPrice || 659;
+        // Use last known real price, or a reasonable default
+        const base = baseSpyPrice || _lastKnownSpyPrice || 555;
         function mkq(b, v) {
             const c = (Math.random() - 0.48) * v;
             return { price: +(b + c).toFixed(2), change: +c.toFixed(2), changePct: +((c / b) * 100).toFixed(2),
@@ -245,10 +210,10 @@ const DataEngine = (() => {
         const vb = 14 + Math.random() * 8;
         return {
             SPY: mkq(base, 4), '^VIX': { price: +vb.toFixed(2), change: +(Math.random() * 2 - 1).toFixed(2), changePct: 0 },
-            QQQ: mkq(565, 5), IWM: mkq(242, 3), XLF: mkq(53, 1), XLE: mkq(93, 2), XLK: mkq(252, 4),
-            XLV: mkq(161, 2), XLI: mkq(139, 2), XLU: mkq(81, 1), USO: mkq(73, 2), TLT: mkq(89, 1),
-            GLD: mkq(292, 3), DXY: mkq(103, 0.8), AAPL: mkq(247, 4), MSFT: mkq(458, 6), NVDA: mkq(147, 7),
-            AMZN: mkq(237, 4), GOOGL: mkq(197, 3), META: mkq(685, 8), TSLA: mkq(283, 8),
+            QQQ: mkq(base * 0.855, 5), IWM: mkq(base * 0.366, 3), XLF: mkq(base * 0.08, 1), XLE: mkq(base * 0.141, 2), XLK: mkq(base * 0.382, 4),
+            XLV: mkq(base * 0.244, 2), XLI: mkq(base * 0.211, 2), XLU: mkq(base * 0.123, 1), USO: mkq(73, 2), TLT: mkq(89, 1),
+            GLD: mkq(292, 3), DXY: mkq(103, 0.8), AAPL: mkq(base * 0.374, 4), MSFT: mkq(base * 0.694, 6), NVDA: mkq(base * 0.223, 7),
+            AMZN: mkq(base * 0.359, 4), GOOGL: mkq(base * 0.298, 3), META: mkq(base * 1.038, 8), TSLA: mkq(base * 0.429, 8),
         };
     }
 
@@ -278,7 +243,7 @@ const DataEngine = (() => {
         return Math.max(-1, Math.min(1, score));
     }
 
-    // ── Finnhub news (real headlines, CORS-enabled) ────────────────
+    // ── Finnhub news ────────────────────────────────────────────────
     async function finnhubNews() {
         try {
             const resp = await fetch(
@@ -288,7 +253,6 @@ const DataEngine = (() => {
             if (!resp.ok) return null;
             const articles = await resp.json();
             if (!Array.isArray(articles) || articles.length === 0) return null;
-            // Take last 20 articles, score sentiment from headline + summary
             return articles.slice(0, 20).map(a => ({
                 title: a.headline || a.summary || '',
                 source: a.source || '',
@@ -304,7 +268,6 @@ const DataEngine = (() => {
         }
     }
 
-    // Finnhub company-specific news for SPY-related tickers
     async function finnhubCompanyNews(symbol) {
         try {
             const now = new Date();
@@ -347,109 +310,8 @@ const DataEngine = (() => {
         }));
     }
 
-    // ── Tradier sandbox (primary options — CORS confirmed, 15min delayed) ──
-    async function tradierOptionsChain(symbol = 'SPY') {
-        try {
-            // Get today's expiration date (YYYY-MM-DD)
-            const today = new Date().toISOString().slice(0, 10);
-
-            // First try today (0DTE), then fall back to expirations lookup
-            const chainResp = await fetch(
-                `https://sandbox.tradier.com/v1/markets/options/chains?symbol=${symbol}&expiration=${today}&greeks=true`,
-                {
-                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(8000),
-                }
-            );
-            if (!chainResp.ok) return null;
-            const chainJson = await chainResp.json();
-            const options = chainJson.options?.option;
-            if (!Array.isArray(options) || options.length === 0) {
-                // Today might not have an expiration — get nearest
-                return tradierNearestExpiration(symbol);
-            }
-
-            const calls = options.filter(o => o.option_type === 'call').map(parseTradierOption);
-            const puts = options.filter(o => o.option_type === 'put').map(parseTradierOption);
-
-            if (calls.length === 0 && puts.length === 0) return null;
-
-            const underlying = options[0]?.underlying_price || 0;
-            console.log(`[DataEngine] Tradier 0DTE chain: ${calls.length} calls, ${puts.length} puts`);
-            return { calls, puts, underlying, expiration: today, is0DTE: true, isReal: true, source: 'tradier' };
-        } catch (e) {
-            console.log('[DataEngine] Tradier chain error:', e.message);
-            return null;
-        }
-    }
-
-    async function tradierNearestExpiration(symbol) {
-        try {
-            const resp = await fetch(
-                `https://sandbox.tradier.com/v1/markets/options/expirations?symbol=${symbol}`,
-                {
-                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(6000),
-                }
-            );
-            if (!resp.ok) return null;
-            const json = await resp.json();
-            const dates = json.expirations?.date;
-            if (!Array.isArray(dates) || dates.length === 0) return null;
-
-            // Pick the nearest future expiration
-            const today = new Date().toISOString().slice(0, 10);
-            const nearest = dates.find(d => d >= today) || dates[0];
-
-            const chainResp = await fetch(
-                `https://sandbox.tradier.com/v1/markets/options/chains?symbol=${symbol}&expiration=${nearest}&greeks=true`,
-                {
-                    headers: { 'Authorization': `Bearer ${TRADIER_SANDBOX_TOKEN}`, 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(8000),
-                }
-            );
-            if (!chainResp.ok) return null;
-            const chainJson = await chainResp.json();
-            const options = chainJson.options?.option;
-            if (!Array.isArray(options) || options.length === 0) return null;
-
-            const calls = options.filter(o => o.option_type === 'call').map(parseTradierOption);
-            const puts = options.filter(o => o.option_type === 'put').map(parseTradierOption);
-            const underlying = options[0]?.underlying_price || 0;
-            const is0DTE = nearest === today;
-
-            console.log(`[DataEngine] Tradier nearest chain (${nearest}): ${calls.length}C / ${puts.length}P`);
-            return { calls, puts, underlying, expiration: nearest, is0DTE, isReal: true, source: 'tradier' };
-        } catch {
-            return null;
-        }
-    }
-
-    function parseTradierOption(o) {
-        const greeks = o.greeks || {};
-        return {
-            strike: o.strike,
-            bid: o.bid || 0,
-            ask: o.ask || 0,
-            mid: +((o.bid + o.ask) / 2).toFixed(2) || o.last || 0,
-            last: o.last || 0,
-            volume: o.volume || 0,
-            openInterest: o.open_interest || 0,
-            impliedVol: greeks.mid_iv || o.implied_volatility || 0,
-            inTheMoney: o.strike ? (o.option_type === 'call' ? o.strike <= (o.underlying_price || 0) : o.strike >= (o.underlying_price || 0)) : false,
-            change: o.change || 0,
-            changePct: o.change_percentage || 0,
-            // Real Greeks from ORATS
-            delta: greeks.delta || null,
-            gamma: greeks.gamma || null,
-            theta: greeks.theta || null,
-            vega: greeks.vega || null,
-        };
-    }
-
-    // ── Yahoo options chain via CORS proxy (fallback) ─────────────
+    // ── Yahoo options chain via CORS proxy ─────────────────────────
     async function yahooOptionsChain(symbol = 'SPY') {
-        // Yahoo's options endpoint returns available expirations and the chain for the nearest one
         const url = `https://query2.finance.yahoo.com/v7/finance/options/${symbol}`;
         for (const proxy of CORS_PROXIES) {
             try {
@@ -466,23 +328,19 @@ const DataEngine = (() => {
 
                 if (calls.length === 0 && puts.length === 0) continue;
 
-                // Find today's expiration (0DTE) if available
                 const todayUnix = Math.floor(new Date().setHours(16, 0, 0, 0) / 1000);
                 const has0DTE = expirations.some(e => Math.abs(e - todayUnix) < 86400);
 
-                // If the nearest expiration isn't today, try fetching today's specifically
                 if (!has0DTE && expirations.length > 0) {
-                    // Return what we have — it's the nearest expiration
-                    return { calls, puts, underlying, expiration: expirations[0], is0DTE: false, isReal: true };
+                    return { calls, puts, underlying, expiration: expirations[0], is0DTE: false, isReal: true, source: 'yahoo' };
                 }
 
-                return { calls, puts, underlying, expiration: expirations[0], is0DTE: has0DTE, isReal: true };
+                return { calls, puts, underlying, expiration: expirations[0], is0DTE: has0DTE, isReal: true, source: 'yahoo' };
             } catch { continue; }
         }
         return null;
     }
 
-    // Fetch a specific expiration date's chain
     async function yahooOptionsChainForDate(symbol, expirationUnix) {
         const url = `https://query2.finance.yahoo.com/v7/finance/options/${symbol}?date=${expirationUnix}`;
         for (const proxy of CORS_PROXIES) {
@@ -496,7 +354,7 @@ const DataEngine = (() => {
                 const puts = (result.options[0].puts || []).map(parseYahooOption);
                 const underlying = result.quote?.regularMarketPrice || 0;
                 if (calls.length === 0 && puts.length === 0) continue;
-                return { calls, puts, underlying, expiration: expirationUnix, is0DTE: true, isReal: true };
+                return { calls, puts, underlying, expiration: expirationUnix, is0DTE: true, isReal: true, source: 'yahoo' };
             } catch { continue; }
         }
         return null;
@@ -535,26 +393,28 @@ const DataEngine = (() => {
         }
 
         // 1) Try Finnhub
-        console.log('[DataEngine] Trying Finnhub...');
+        console.log('[DataEngine] Trying Finnhub quotes...');
         const fh = await finnhubAllQuotes(SYMBOLS);
         if (fh && fh.SPY) {
             console.log('[DataEngine] Finnhub OK — SPY $' + fh.SPY.price);
             _usingSimulated = false;
+            _lastKnownSpyPrice = fh.SPY.price;
             removeSimulatedWarning();
             return setCache(key, fh);
         }
 
         // 2) Try Yahoo via CORS proxy
-        console.log('[DataEngine] Trying Yahoo via CORS proxy...');
+        console.log('[DataEngine] Trying Yahoo quotes...');
         const yh = await yahooQuote(SYMBOLS);
         if (yh && yh.SPY) {
             console.log('[DataEngine] Yahoo OK — SPY $' + yh.SPY.price);
             _usingSimulated = false;
+            _lastKnownSpyPrice = yh.SPY.price;
             removeSimulatedWarning();
             return setCache(key, yh);
         }
 
-        // 4) All failed — simulated
+        // 3) All failed — simulated
         console.log('[DataEngine] All APIs failed — using simulated data');
         _usingSimulated = true;
         showSimulatedWarning();
@@ -569,38 +429,35 @@ const DataEngine = (() => {
         const dayMap = { '1d': 1, '5d': 5, '1mo': 22, '3mo': 66 };
         const days = dayMap[range] || 1;
 
-        // 1) Try Tradier timesales (CORS, reliable)
-        const tr = await tradierChart(symbol, days);
-        if (tr && tr.length > 10) return setCache(key, tr, 120_000);
-
-        // 2) Try Finnhub candles
+        // 1) Try Finnhub candles (real market data)
+        console.log('[DataEngine] Trying Finnhub chart...');
         const fh = await finnhubChart(symbol, days);
         if (fh && fh.length > 10) return setCache(key, fh, 120_000);
 
-        // 3) Try Yahoo chart
+        // 2) Try Yahoo chart via CORS proxy
+        console.log('[DataEngine] Trying Yahoo chart...');
         const yh = await yahooChart(symbol, range, interval);
         if (yh && yh.length > 10) return setCache(key, yh, 120_000);
 
-        // Fallback: use last known SPY price
-        const basePrice = cache.allQuotes?.data?.SPY?.price || 660;
+        // 3) Fallback: simulated chart anchored to last known price
+        console.log('[DataEngine] Chart APIs failed — generating simulated chart');
+        const basePrice = _lastKnownSpyPrice || cache.allQuotes?.data?.SPY?.price || 555;
         const intMap = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 390 };
         return setCache(key, generateSimulatedChart(basePrice, days, intMap[interval] || 5), 120_000);
     }
 
     async function fetchNews() {
         const key = 'news';
-        const hit = cached(key, 300_000); // 5 min cache for news
+        const hit = cached(key, 300_000);
         if (hit) return hit;
 
-        // Try Finnhub market news + SPY-specific news
-        console.log('[DataEngine] Fetching Finnhub news...');
+        console.log('[DataEngine] Fetching news...');
         const [market, spy] = await Promise.all([
             finnhubNews(),
             finnhubCompanyNews('SPY'),
         ]);
 
         if (market && market.length > 0) {
-            // Merge and deduplicate by title
             const all = [...(spy || []), ...market];
             const seen = new Set();
             const deduped = all.filter(a => {
@@ -613,28 +470,19 @@ const DataEngine = (() => {
             return setCache(key, deduped, 300_000);
         }
 
-        // Fallback to simulated
         console.log('[DataEngine] News API failed — using simulated headlines');
         return setCache(key, generateSimulatedNews(), 300_000);
     }
 
     async function fetchOptionsChain(symbol = 'SPY') {
         const key = `options_${symbol}`;
-        const hit = cached(key, 60_000); // 1 min cache
+        const hit = cached(key, 60_000);
         if (hit) return hit;
 
-        // 1) Try Tradier sandbox (CORS confirmed, has Greeks/IV from ORATS)
-        console.log('[DataEngine] Trying Tradier options chain...');
-        const tradier = await tradierOptionsChain(symbol);
-        if (tradier && tradier.calls.length > 0) {
-            return setCache(key, tradier, 60_000);
-        }
-
-        // 2) Fallback: Yahoo via CORS proxy
-        console.log('[DataEngine] Trying Yahoo options chain via proxy...');
+        // Yahoo options chain via CORS proxy
+        console.log('[DataEngine] Trying Yahoo options chain...');
         const yahoo = await yahooOptionsChain(symbol);
         if (yahoo) {
-            // If we didn't get 0DTE, try fetching today's specifically
             if (!yahoo.is0DTE && yahoo.expiration) {
                 const todayMidnight = new Date();
                 todayMidnight.setHours(0, 0, 0, 0);
@@ -655,15 +503,9 @@ const DataEngine = (() => {
 
     function isUsingSimulatedData() { return _usingSimulated; }
 
-    // US market holidays (observed dates, month is 0-indexed)
+    // US market holidays
     function isMarketHoliday(ny) {
-        const y = ny.getFullYear(), m = ny.getMonth(), d = ny.getDate(), dow = ny.getDay();
-        // Fixed holidays (observed: if Sat→Fri, if Sun→Mon)
-        const fixed = [[0,1],[6,4],[12,25]]; // New Year, July 4, Christmas (month+1 for readability)
-        // Actually let's just list known holidays for current + next year
-        // MLK: 3rd Mon Jan, Presidents: 3rd Mon Feb, Good Friday: varies,
-        // Memorial: last Mon May, Juneteenth: Jun 19, Labor: 1st Mon Sep,
-        // Thanksgiving: 4th Thu Nov
+        const y = ny.getFullYear(), m = ny.getMonth(), d = ny.getDate();
         const nthDow = (month, weekday, n) => {
             const first = new Date(y, month, 1);
             let day = first.getDay();
@@ -686,12 +528,11 @@ const DataEngine = (() => {
             [10, nthDow(10, 4, 4)],          // Thanksgiving
             [11, 25],                         // Christmas
         ];
-        // Check observed: if holiday falls on Sat, observed Fri; Sun, observed Mon
         for (const [hm, hd] of holidays) {
             const hDate = new Date(y, hm, hd);
             let obsD = hd, obsM = hm;
-            if (hDate.getDay() === 6) { obsD--; } // Saturday → Friday
-            if (hDate.getDay() === 0) { obsD++; } // Sunday → Monday
+            if (hDate.getDay() === 6) { obsD--; }
+            if (hDate.getDay() === 0) { obsD++; }
             if (m === obsM && d === obsD) return true;
         }
         return false;
@@ -706,13 +547,11 @@ const DataEngine = (() => {
         const t = h + min / 60;
         const holiday = day >= 1 && day <= 5 && isMarketHoliday(ny);
 
-        // Next open calculation
         function nextOpen() {
             const next = new Date(ny);
             if (t >= 9.5 && t < 16 && !holiday && day > 0 && day < 6) {
-                return null; // market is open now
+                return null;
             }
-            // Advance to next weekday 9:30
             if (t >= 9.5 || holiday || day === 0 || day === 6) {
                 next.setDate(next.getDate() + 1);
             }
