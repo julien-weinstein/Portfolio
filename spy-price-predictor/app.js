@@ -85,6 +85,29 @@
             chartData = await DataEngine.fetchPriceChart('SPY', currentRange, intervals[currentRange]);
             ta = TechnicalAnalysis.analyze(chartData);
 
+            // Sync quote price with chart data — chart candles are more accurate
+            // than the separate quote endpoint which can return stale prices
+            if (chartData?.length > 0 && quotes.SPY) {
+                const latestCandle = chartData[chartData.length - 1];
+                const chartPrice = latestCandle.close;
+                const quotePrice = quotes.SPY.price;
+                // If chart price differs materially (>$0.10), trust the chart
+                if (Math.abs(chartPrice - quotePrice) > 0.10) {
+                    console.log(`[App] Price sync: quote $${quotePrice} → chart $${chartPrice}`);
+                    const prevClose = quotes.SPY.prevClose || quotes.SPY.open;
+                    quotes.SPY.price = chartPrice;
+                    if (prevClose) {
+                        quotes.SPY.change = +(chartPrice - prevClose).toFixed(2);
+                        quotes.SPY.changePct = +((chartPrice - prevClose) / prevClose * 100).toFixed(2);
+                    }
+                    // Update high/low from chart if available
+                    const allHighs = chartData.map(c => c.high).filter(Boolean);
+                    const allLows = chartData.map(c => c.low).filter(Boolean);
+                    if (allHighs.length) quotes.SPY.high = Math.max(...allHighs);
+                    if (allLows.length) quotes.SPY.low = Math.min(...allLows);
+                }
+            }
+
             const session = marketStatus.session;
 
             if (session === 'regular' || session === 'premarket') {
@@ -167,6 +190,49 @@
         } else {
             document.getElementById('rangeValue').textContent = '--';
         }
+    }
+
+    function renderOTMPick(otm, dir) {
+        if (!otm) return '';
+        const premiumStr = otm.fromChain && otm.bid != null
+            ? `$${otm.bid}/$${otm.ask}`
+            : `$${otm.premium}`;
+        const premiumLabel = otm.fromChain ? 'Bid/Ask' : 'Est. Premium';
+        const rrLabel = otm.riskReward ? `${otm.riskReward}x` : '--';
+        return `
+            <div class="otm-card">
+                <div class="otm-header">
+                    <span class="otm-label">OTM Alternative</span>
+                    <span class="otm-badge">CHEAPER</span>
+                </div>
+                <div class="otm-strike-row">
+                    <span class="otm-strike">${otm.strike}</span>
+                    <span class="otm-type">${dir}</span>
+                </div>
+                <div class="otm-stats">
+                    <div class="otm-stat">
+                        <span class="otm-stat-value">${premiumStr}</span>
+                        <span class="otm-stat-label">${premiumLabel}</span>
+                    </div>
+                    <div class="otm-stat">
+                        <span class="otm-stat-value">${otm.probITM}%</span>
+                        <span class="otm-stat-label">Prob ITM</span>
+                    </div>
+                    <div class="otm-stat">
+                        <span class="otm-stat-value">${rrLabel}</span>
+                        <span class="otm-stat-label">Risk/Reward</span>
+                    </div>
+                    <div class="otm-stat">
+                        <span class="otm-stat-value">$${otm.breakeven}</span>
+                        <span class="otm-stat-label">Breakeven</span>
+                    </div>
+                </div>
+                <div class="otm-note">
+                    Lower probability, higher reward. Only if the primary direction plays out strongly.
+                    ${otm.target1 ? `Target: $${otm.target1} (+${otm.target1Pct}%) → $${otm.target2} (+${otm.target2Pct}%). Stop: $${otm.stopLoss}.` : ''}
+                </div>
+            </div>
+        `;
     }
 
     function renderRecommendation() {
@@ -273,6 +339,8 @@
                     <span>Risk: <b>${prediction.riskLevel}</b></span>
                     <span>Range: <b>$${prediction.predictedLow} - $${prediction.predictedHigh}</b></span>
                 </div>
+
+                ${renderOTMPick(strategy.otmPick, dir)}
             `;
             return;
         }
@@ -393,6 +461,8 @@
                 <span>Risk: <b>${prediction.riskLevel}</b></span>
                 <span>Strength: <b>${rec.momentum}</b></span>
             </div>
+
+            ${renderOTMPick(strategy.otmPick, dir)}
         `;
     }
 
