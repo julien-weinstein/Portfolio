@@ -1,12 +1,15 @@
 /**
- * Options Strategy — 0DTE Single Strike Recommendation
+ * Options Strategy — 0DTE Strike Recommendations
  *
- * Professional-grade strike selection:
- *   - Real chain (Yahoo): ranks by liquidity, spread, delta proximity
- *   - Estimated: Black-Scholes with VIX-calibrated IV
+ * Generates two picks:
+ *   Primary: Near-the-money (ATM/slightly OTM) — higher prob, moderate reward
+ *   OTM:     Further OTM "lotto" — cheaper premium, lower prob, huge upside
+ *
+ * Uses:
+ *   - Real chain (Yahoo): ranks by liquidity, spread, delta, gamma
+ *   - Black-Scholes estimation when chain unavailable
  *   - Dynamic profit targets with scale-out levels
- *   - Theta-aware sell timing recommendations
- *   - Pre-market trade planning for next-day entries
+ *   - Theta-aware sell timing
  */
 
 const OptionsStrategy = (() => {
@@ -46,8 +49,39 @@ const OptionsStrategy = (() => {
         return type === 'call' ? normalCDF(d2) : normalCDF(-d2);
     }
 
-    // ── Pick best strike from real options chain ───────────────────
-    function pickFromChain(chain, direction, currentPrice, atr, T, r) {
+    // ── Build a recommendation object from an option ────────────────
+    function buildRec(direction, opt, currentPrice, T, r, defaultIV) {
+        const type = direction === 'CALL' ? 'call' : 'put';
+        const premium = opt.mid > 0 ? opt.mid : opt.last;
+        const iv = opt.impliedVol > 0 ? opt.impliedVol : defaultIV;
+        const pItm = probITM(currentPrice, opt.strike, T, r, iv, type);
+        const breakeven = type === 'call' ? opt.strike + premium : opt.strike - premium;
+        const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
+
+        const g = (opt.delta != null)
+            ? { delta: +opt.delta.toFixed(2), gamma: +(opt.gamma || 0).toFixed(4), theta: +(opt.theta || 0).toFixed(2) }
+            : greeks(currentPrice, opt.strike, T, r, iv, type);
+
+        return {
+            direction,
+            strike: opt.strike,
+            type: direction,
+            premium: +premium.toFixed(2),
+            bid: opt.bid,
+            ask: opt.ask,
+            breakeven: +breakeven.toFixed(2),
+            probITM: Math.round(pItm * 100),
+            probProfit: Math.round(pProfit * 100),
+            greeks: g,
+            volume: opt.volume,
+            openInterest: opt.openInterest,
+            impliedVol: +(iv * 100).toFixed(1),
+            fromChain: true,
+        };
+    }
+
+    // ── Pick primary (near-money) strike from chain ─────────────────
+    function pickPrimary(chain, direction, currentPrice, atr, T, r) {
         const type = direction === 'CALL' ? 'call' : 'put';
         const options = type === 'call' ? chain.calls : chain.puts;
         if (!options || options.length === 0) return null;
@@ -76,40 +110,73 @@ const OptionsStrategy = (() => {
             .sort((a, b) => b.score - a.score);
 
         if (scored.length === 0) return null;
-
-        const best = scored[0];
-        const premium = best.mid > 0 ? best.mid : best.last;
-        const iv = best.impliedVol > 0 ? best.impliedVol : 0.2;
-        const pItm = probITM(currentPrice, best.strike, T, r, iv, type);
-        const breakeven = type === 'call' ? best.strike + premium : best.strike - premium;
-        const pProfit = probITM(currentPrice, breakeven, T, r, iv, type);
-
-        const g = (best.delta != null)
-            ? { delta: +best.delta.toFixed(2), gamma: +(best.gamma || 0).toFixed(4), theta: +(best.theta || 0).toFixed(2) }
-            : greeks(currentPrice, best.strike, T, r, iv, type);
-
-        return {
-            direction,
-            strike: best.strike,
-            type: direction,
-            premium: +premium.toFixed(2),
-            bid: best.bid,
-            ask: best.ask,
-            breakeven: +breakeven.toFixed(2),
-            probITM: Math.round(pItm * 100),
-            probProfit: Math.round(pProfit * 100),
-            greeks: g,
-            volume: best.volume,
-            openInterest: best.openInterest,
-            impliedVol: +(iv * 100).toFixed(1),
-            fromChain: true,
-        };
+        return buildRec(direction, scored[0], currentPrice, T, r, 0.2);
     }
 
-    // ── Estimate when no chain is available ────────────────────────
-    function estimateFromModel(direction, currentPrice, atr, T, r, iv) {
+    // ── Pick OTM "lotto" strike — cheaper, further from money ───────
+    function pickOTM(chain, direction, currentPrice, atr, T, r, composite) {
         const type = direction === 'CALL' ? 'call' : 'put';
-        const offset = direction === 'CALL' ? atr * 0.15 : -atr * 0.15;
+        const options = type === 'call' ? chain.calls : chain.puts;
+        if (!options || options.length === 0) return null;
+
+        const absScore = Math.abs(composite);
+
+        // Target: 0.5–1.5x ATR out-of-the-money depending on signal strength
+        // Stronger signal → willing to go further OTM (bigger move expected)
+        const otmMultiplier = 0.5 + absScore * 1.5; // 0.5 to 2.0
+        const targetOTM = direction === 'CALL'
+            ? currentPrice + atr * otmMultiplier
+            : currentPrice - atr * otmMultiplier;
+
+        const candidates = options
+            .filter(o => {
+                if (o.bid <= 0 && o.last <= 0) return false;
+                const premium = o.mid > 0 ? o.mid : o.last;
+                // Must be cheaper than $2.00 and OTM
+                if (premium > 2.00) return false;
+                if (premium < 0.02) return false; // too cheap = no liquidity
+                if (type === 'call' && o.strike <= currentPrice) return false;
+                if (type === 'put' && o.strike >= currentPrice) return false;
+                // Don't go more than 3x ATR out
+                const dist = Math.abs(o.strike - currentPrice);
+                if (dist > atr * 3) return false;
+                return true;
+            })
+            .map(o => {
+                const premium = o.mid > 0 ? o.mid : o.last;
+                const dist = Math.abs(o.strike - targetOTM);
+
+                // Scoring: balance proximity to target, cheapness, and liquidity
+                // We want cheap options near our OTM target with decent volume
+                const cheapness = Math.max(0, 2.0 - premium); // cheaper = better
+                const liquidity = Math.log10(Math.max(1, o.volume)) + Math.log10(Math.max(1, o.openInterest)) * 0.5;
+                const spread = o.ask > 0 && o.bid > 0 ? (o.ask - o.bid) / Math.max(0.01, o.mid) : 2;
+
+                // Risk/reward: calculate potential gain if it goes ITM by 1 ATR past strike
+                const iv = o.impliedVol > 0 ? o.impliedVol : 0.25;
+                const expectedPayoff = type === 'call'
+                    ? Math.max(0, (currentPrice + atr * (1 + absScore)) - o.strike)
+                    : Math.max(0, o.strike - (currentPrice - atr * (1 + absScore)));
+                const riskReward = premium > 0 ? expectedPayoff / premium : 0;
+
+                const score = -dist * 1.5 + cheapness * 10 + liquidity * 3 - spread * 20 + riskReward * 2;
+                return { ...o, score, riskReward: +riskReward.toFixed(1) };
+            })
+            .sort((a, b) => b.score - a.score);
+
+        if (candidates.length === 0) return null;
+
+        const best = candidates[0];
+        const rec = buildRec(direction, best, currentPrice, T, r, 0.25);
+        rec.riskReward = best.riskReward;
+        rec.isOTM = true;
+        return rec;
+    }
+
+    // ── Estimate strikes when no chain available ────────────────────
+    function estimateFromModel(direction, currentPrice, atr, T, r, iv, otmOffset) {
+        const type = direction === 'CALL' ? 'call' : 'put';
+        const offset = direction === 'CALL' ? atr * otmOffset : -atr * otmOffset;
         const strike = Math.round(currentPrice + offset);
 
         const premium = Math.max(0.01, blackScholes(currentPrice, strike, T, r, iv, type));
@@ -131,6 +198,21 @@ const OptionsStrategy = (() => {
         };
     }
 
+    function addTargets(rec, currentPrice, atr, composite, hoursToClose) {
+        if (!rec) return;
+        const targets = PredictionEngine.calculateTargets(
+            rec.premium, currentPrice, atr, composite, hoursToClose
+        );
+        rec.stopLoss = targets.stopLoss;
+        rec.target1 = targets.target1;
+        rec.target1Pct = targets.target1Pct;
+        rec.target2 = targets.target2;
+        rec.target2Pct = targets.target2Pct;
+        rec.sellBy = targets.sellBy;
+        rec.momentum = targets.momentum;
+        rec.scaleOut = targets.scaleOut;
+    }
+
     function generateStrategy(prediction, optionsChain) {
         const { direction, confidence, currentPrice, atr, composite } = prediction;
 
@@ -139,7 +221,6 @@ const OptionsStrategy = (() => {
         const marketHour = ny.getHours() + ny.getMinutes() / 60;
         const isPremarket = prediction.isPremarket;
 
-        // For pre-market, calculate as if full day ahead
         const hoursToClose = isPremarket ? Math.max(0.1, 16 - 9.5) : Math.max(0.1, 16 - marketHour);
         const T = hoursToClose / (252 * 6.5);
 
@@ -150,52 +231,55 @@ const OptionsStrategy = (() => {
         const r = 0.053;
 
         let recommendation = null;
+        let otmPick = null;
         let chainUsed = false;
 
-        // Generate recommendations for both regular and pre-market sessions
         const minConfidence = isPremarket ? 15 : 20;
         if (direction !== 'NEUTRAL' && confidence > minConfidence && hoursToClose > 0.25) {
+            // Primary pick (near-money)
             if (optionsChain?.isReal && optionsChain.calls?.length > 0) {
-                recommendation = pickFromChain(optionsChain, direction, currentPrice, atr, T, r);
+                recommendation = pickPrimary(optionsChain, direction, currentPrice, atr, T, r);
                 if (recommendation) chainUsed = true;
+
+                // OTM pick — cheaper alternative with bigger upside
+                otmPick = pickOTM(optionsChain, direction, currentPrice, atr, T, r, composite);
             }
             if (!recommendation) {
-                recommendation = estimateFromModel(direction, currentPrice, atr, T, r, iv);
+                recommendation = estimateFromModel(direction, currentPrice, atr, T, r, iv, 0.15);
+            }
+            if (!otmPick) {
+                // Estimate an OTM strike: ~0.8–1.2x ATR out depending on signal
+                const absScore = Math.abs(composite);
+                const otmOffset = 0.6 + absScore * 0.8;
+                otmPick = estimateFromModel(direction, currentPrice, atr, T, r, iv * 1.1, otmOffset);
+                otmPick.isOTM = true;
+                // Estimate risk/reward
+                const expectedMove = atr * (1 + absScore);
+                otmPick.riskReward = otmPick.premium > 0
+                    ? +(expectedMove / otmPick.premium).toFixed(1) : 0;
             }
 
-            // Add dynamic profit targets
-            if (recommendation) {
-                const targets = PredictionEngine.calculateTargets(
-                    recommendation.premium, currentPrice, atr, composite, hoursToClose
-                );
-                recommendation.stopLoss = targets.stopLoss;
-                recommendation.target1 = targets.target1;
-                recommendation.target1Pct = targets.target1Pct;
-                recommendation.target2 = targets.target2;
-                recommendation.target2Pct = targets.target2Pct;
-                recommendation.sellBy = targets.sellBy;
-                recommendation.momentum = targets.momentum;
-                recommendation.scaleOut = targets.scaleOut;
-            }
+            addTargets(recommendation, currentPrice, atr, composite, hoursToClose);
+            if (otmPick) addTargets(otmPick, currentPrice, atr, composite, hoursToClose);
         }
 
         let timing;
         if (isPremarket) {
             timing = prediction.entryTiming?.entryReason || 'Analyzing pre-market conditions...';
         } else if (hoursToClose > 5.5) {
-            timing = 'Opening in progress -- wait for 9:45-10:15 ET range to form';
+            timing = 'Opening in progress — wait for 9:45-10:15 ET range to form';
         } else if (hoursToClose > 4.5) {
-            timing = 'Opening range established -- prime entry window';
+            timing = 'Opening range established — prime entry window';
         } else if (hoursToClose > 3) {
-            timing = 'Mid-day -- look for VWAP retest or breakout';
+            timing = 'Mid-day — look for VWAP retest or breakout';
         } else if (hoursToClose > 1.5) {
-            timing = 'Theta accelerating -- tighten stops, reduce size';
+            timing = 'Theta accelerating — tighten stops, reduce size';
         } else if (hoursToClose > 0.5) {
-            timing = 'Power hour -- high conviction only, tight stops';
+            timing = 'Power hour — high conviction only, tight stops';
         } else if (hoursToClose > 0.25) {
-            timing = 'Final 15 min -- close all positions';
+            timing = 'Final 15 min — close all positions';
         } else {
-            timing = 'Market closing -- no new entries';
+            timing = 'Market closing — no new entries';
         }
 
         let displayIV = +(iv * 100).toFixed(1);
@@ -205,6 +289,7 @@ const OptionsStrategy = (() => {
 
         return {
             recommendation,
+            otmPick,
             timing,
             hoursToClose: +hoursToClose.toFixed(1),
             iv: displayIV,

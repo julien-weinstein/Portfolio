@@ -513,6 +513,117 @@ main {
     text-transform: uppercase; margin-top: 3px;
 }
 
+/* ── OTM Pick Card ─────────────────────────────────────── */
+.otm-card {
+    text-align: left;
+    margin-top: 20px;
+    padding: 18px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.otm-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 2px;
+    background: var(--amber);
+    opacity: 0.6;
+}
+
+.otm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.otm-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
+.otm-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    background: var(--amber-bg);
+    color: var(--amber);
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid rgba(234, 179, 8, 0.1);
+}
+
+.otm-strike-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.otm-strike {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.rec-card.bullish .otm-strike { color: var(--green); }
+.rec-card.bearish .otm-strike { color: var(--red); }
+
+.otm-type {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+}
+.rec-card.bullish .otm-type { color: var(--green); }
+.rec-card.bearish .otm-type { color: var(--red); }
+
+.otm-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(75px, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.otm-stat {
+    text-align: center;
+    padding: 8px 4px;
+    background: rgba(255, 255, 255, 0.015);
+    border-radius: var(--radius-xs);
+}
+
+.otm-stat-value {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.otm-stat-label {
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--dim);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-top: 1px;
+}
+
+.otm-note {
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.5;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
+}
+
 /* ── Trade Plan ─────────────────────────────────────────── */
 .trade-plan {
     text-align: left;
