@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hunter Biden 2028 — Official Tee</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">Biden<span>2028</span></div>
+      <nav class="header-nav">
+        <a href="#product">Shop</a>
+        <a href="#about">About</a>
+      </nav>
+      <button class="cart-btn" id="cartBtn" aria-label="Open cart">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        <span class="cart-count" id="cartCount">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-text">
+        <p class="hero-eyebrow">Limited Edition Drop</p>
+        <h1>Make History.<br />Wear History.</h1>
+        <p class="hero-sub">The boldest political tee of the decade. 100% heavy-weight cotton, screen-printed in the USA.</p>
+        <a href="#product" class="btn-primary">Shop Now</a>
+      </div>
+      <div class="hero-visual">
+        <div class="tshirt-mockup">
+          <div class="shirt-body">
+            <div class="shirt-collar"></div>
+            <div class="shirt-sleeve shirt-sleeve--left"></div>
+            <div class="shirt-sleeve shirt-sleeve--right"></div>
+            <div class="shirt-front">
+              <img src="design.png" alt="Hunter Biden 2028 design" class="shirt-design" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRODUCT -->
+  <section class="product-section" id="product">
+    <div class="product-inner">
+
+      <!-- Gallery -->
+      <div class="product-gallery">
+        <div class="gallery-main">
+          <div class="gallery-tshirt">
+            <div class="shirt-body" id="shirtPreview">
+              <div class="shirt-collar"></div>
+              <div class="shirt-sleeve shirt-sleeve--left"></div>
+              <div class="shirt-sleeve shirt-sleeve--right"></div>
+              <div class="shirt-front">
+                <img src="design.png" alt="Hunter Biden 2028 design" class="shirt-design" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="gallery-thumbs">
+          <button class="thumb active" data-color="navy" style="background:#0d1b2e" aria-label="Navy"></button>
+          <button class="thumb" data-color="white" style="background:#f5f5f5" aria-label="White"></button>
+          <button class="thumb" data-color="red" style="background:#c0392b" aria-label="Red"></button>
+        </div>
+      </div>
+
+      <!-- Info -->
+      <div class="product-info">
+        <p class="product-badge">Best Seller</p>
+        <h2 class="product-title">Hunter Biden 2028 Official Campaign Tee</h2>
+        <div class="product-price">
+          <span class="price-current">$29.99</span>
+          <span class="price-original">$39.99</span>
+          <span class="price-badge">25% OFF</span>
+        </div>
+
+        <div class="product-rating">
+          <span class="stars">★★★★★</span>
+          <span class="rating-count">4.9 (247 reviews)</span>
+        </div>
+
+        <div class="product-divider"></div>
+
+        <!-- Color -->
+        <div class="option-group">
+          <label class="option-label">Color: <strong id="colorLabel">Navy</strong></label>
+          <div class="color-swatches">
+            <button class="swatch active" data-color="navy" data-name="Navy" style="background:#0d1b2e" aria-label="Navy"></button>
+            <button class="swatch" data-color="white" data-name="White" style="background:#f5f5f5; border-color:#ccc" aria-label="White"></button>
+            <button class="swatch" data-color="red" data-name="Red" style="background:#c0392b" aria-label="Red"></button>
+          </div>
+        </div>
+
+        <!-- Size -->
+        <div class="option-group">
+          <label class="option-label">Size: <strong id="sizeLabel">—</strong></label>
+          <div class="size-grid">
+            <button class="size-btn" data-size="XS">XS</button>
+            <button class="size-btn" data-size="S">S</button>
+            <button class="size-btn" data-size="M">M</button>
+            <button class="size-btn" data-size="L">L</button>
+            <button class="size-btn" data-size="XL">XL</button>
+            <button class="size-btn" data-size="2XL">2XL</button>
+          </div>
+          <button class="size-guide-link" id="sizeGuideBtn">Size Guide</button>
+        </div>
+
+        <!-- Quantity -->
+        <div class="option-group">
+          <label class="option-label">Quantity</label>
+          <div class="qty-control">
+            <button class="qty-btn" id="qtyMinus" aria-label="Decrease">−</button>
+            <span class="qty-value" id="qtyValue">1</span>
+            <button class="qty-btn" id="qtyPlus" aria-label="Increase">+</button>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="product-actions">
+          <button class="btn-add-cart" id="addToCartBtn">Add to Cart</button>
+          <button class="btn-buy-now" id="buyNowBtn">Buy Now</button>
+        </div>
+
+        <p class="size-error" id="sizeError">Please select a size before adding to cart.</p>
+
+        <!-- Perks -->
+        <ul class="perks-list">
+          <li>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            Free shipping on orders over $50
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            Made &amp; printed in the USA
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            30-day hassle-free returns
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="features-section">
+    <div class="features-inner">
+      <div class="feature-card">
+        <div class="feature-icon">🇺🇸</div>
+        <h3>Made in America</h3>
+        <p>Printed in the USA on 100% heavy-weight cotton tees. Soft, durable, and built to last through every rally.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✊</div>
+        <h3>Bold Statement</h3>
+        <p>High-resolution screen print that won't crack, fade, or peel. Your message stays sharp wash after wash.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📦</div>
+        <h3>Fast Shipping</h3>
+        <p>Orders ship within 2 business days. Free standard shipping on orders over $50. Express available at checkout.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- REVIEWS -->
+  <section class="reviews-section" id="about">
+    <div class="reviews-inner">
+      <h2 class="section-title">What People Are Saying</h2>
+      <div class="reviews-grid">
+        <div class="review-card">
+          <div class="review-stars">★★★★★</div>
+          <p>"Wore this to Thanksgiving and immediately ended three relationships. 10/10 would buy again."</p>
+          <div class="reviewer">— Chad T., Iowa</div>
+        </div>
+        <div class="review-card">
+          <div class="review-stars">★★★★★</div>
+          <p>"The fabric is incredibly soft and the print quality is outstanding. This is my new go-to shirt."</p>
+          <div class="reviewer">— Melissa R., Nevada</div>
+        </div>
+        <div class="review-card">
+          <div class="review-stars">★★★★☆</div>
+          <p>"Got three compliments and two dirty looks in one afternoon. Exactly what I was hoping for."</p>
+          <div class="reviewer">— Darnell K., Michigan</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-logo">Biden<span>2028</span></div>
+      <p class="footer-disclaimer">This is a satirical/parody product. Not affiliated with any official political campaign or candidate.</p>
+      <div class="footer-links">
+        <a href="#">Privacy Policy</a>
+        <a href="#">Terms of Service</a>
+        <a href="#">Contact</a>
+      </div>
+      <p class="footer-copy">&copy; 2026 Biden2028 Shop. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <!-- CART DRAWER -->
+  <div class="cart-overlay" id="cartOverlay"></div>
+  <aside class="cart-drawer" id="cartDrawer" aria-label="Shopping cart">
+    <div class="cart-header">
+      <h2>Your Cart</h2>
+      <button class="cart-close" id="cartClose" aria-label="Close cart">✕</button>
+    </div>
+    <div class="cart-body" id="cartBody">
+      <div class="cart-empty" id="cartEmpty">
+        <p>Your cart is empty.</p>
+        <button class="btn-primary" onclick="closeCart()">Continue Shopping</button>
+      </div>
+      <ul class="cart-items" id="cartItems"></ul>
+    </div>
+    <div class="cart-footer" id="cartFooter" style="display:none">
+      <div class="cart-subtotal">
+        <span>Subtotal</span>
+        <span id="cartSubtotal">$0.00</span>
+      </div>
+      <p class="cart-shipping-note">Shipping &amp; taxes calculated at checkout</p>
+      <button class="btn-checkout" id="checkoutBtn">Proceed to Checkout</button>
+    </div>
+  </aside>
+
+  <!-- SIZE GUIDE MODAL -->
+  <div class="modal-overlay" id="sizeModalOverlay"></div>
+  <div class="modal" id="sizeModal" role="dialog" aria-modal="true" aria-label="Size guide">
+    <div class="modal-header">
+      <h2>Size Guide</h2>
+      <button class="modal-close" id="sizeModalClose" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <table class="size-table">
+        <thead>
+          <tr><th>Size</th><th>Chest (in)</th><th>Length (in)</th><th>Sleeve (in)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>XS</td><td>32–34</td><td>27</td><td>8</td></tr>
+          <tr><td>S</td><td>35–37</td><td>28</td><td>8.5</td></tr>
+          <tr><td>M</td><td>38–40</td><td>29</td><td>9</td></tr>
+          <tr><td>L</td><td>41–43</td><td>30</td><td>9.5</td></tr>
+          <tr><td>XL</td><td>44–46</td><td>31</td><td>10</td></tr>
+          <tr><td>2XL</td><td>47–49</td><td>32</td><td>10.5</td></tr>
+        </tbody>
+      </table>
+      <p class="size-note">Measurements are in inches. For a looser fit, size up.</p>
+    </div>
+  </div>
+
+  <!-- CHECKOUT MODAL -->
+  <div class="modal-overlay" id="checkoutOverlay"></div>
+  <div class="modal modal--checkout" id="checkoutModal" role="dialog" aria-modal="true" aria-label="Checkout">
+    <div class="modal-header">
+      <h2>Checkout</h2>
+      <button class="modal-close" id="checkoutModalClose" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body" id="checkoutBody">
+      <form class="checkout-form" id="checkoutForm" novalidate>
+        <fieldset>
+          <legend>Contact</legend>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="firstName">First Name</label>
+              <input type="text" id="firstName" placeholder="Hunter" required />
+            </div>
+            <div class="form-group">
+              <label for="lastName">Last Name</label>
+              <input type="text" id="lastName" placeholder="Biden" required />
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="hunter@biden2028.com" required />
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Shipping Address</legend>
+          <div class="form-group">
+            <label for="address">Street Address</label>
+            <input type="text" id="address" placeholder="1600 Pennsylvania Ave" required />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="city">City</label>
+              <input type="text" id="city" placeholder="Washington" required />
+            </div>
+            <div class="form-group form-group--sm">
+              <label for="state">State</label>
+              <input type="text" id="state" placeholder="DC" maxlength="2" required />
+            </div>
+            <div class="form-group form-group--sm">
+              <label for="zip">ZIP</label>
+              <input type="text" id="zip" placeholder="20500" maxlength="5" required />
+            </div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Payment</legend>
+          <div class="form-group">
+            <label for="cardNumber">Card Number</label>
+            <input type="text" id="cardNumber" placeholder="4242 4242 4242 4242" maxlength="19" required />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="expiry">Expiry</label>
+              <input type="text" id="expiry" placeholder="MM/YY" maxlength="5" required />
+            </div>
+            <div class="form-group form-group--sm">
+              <label for="cvv">CVV</label>
+              <input type="text" id="cvv" placeholder="123" maxlength="4" required />
+            </div>
+          </div>
+        </fieldset>
+        <div class="checkout-summary">
+          <div class="checkout-total">
+            <span>Order Total</span>
+            <strong id="checkoutTotal">$0.00</strong>
+          </div>
+        </div>
+        <button type="submit" class="btn-checkout">Place Order</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ORDER SUCCESS -->
+  <div class="modal-overlay" id="successOverlay"></div>
+  <div class="modal modal--success" id="successModal" role="dialog" aria-modal="true">
+    <div class="modal-body success-body">
+      <div class="success-icon">🎉</div>
+      <h2>Order Confirmed!</h2>
+      <p>Thanks for your purchase. Your Hunter Biden 2028 tee is on its way.</p>
+      <p class="success-sub">A confirmation email has been sent to <strong id="successEmail"></strong>.</p>
+      <button class="btn-primary" id="successClose">Keep Shopping</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
