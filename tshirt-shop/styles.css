@@ -187,7 +187,7 @@ a { color: inherit; text-decoration: none; }
   position: relative;
   width: 280px;
   height: 300px;
-  background: #0d1b2e;
+  background: #f0f0f0;
   border-radius: 0 0 16px 16px;
   transition: background 0.3s;
   filter: drop-shadow(0 20px 40px rgba(0,0,0,0.6));

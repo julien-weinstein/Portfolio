@@ -5,7 +5,7 @@
    ============================================================ */
 const state = {
   cart: [],
-  selectedColor: 'navy',
+  selectedColor: 'white',
   selectedSize: null,
   qty: 1,
 };
